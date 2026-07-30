@@ -18,7 +18,7 @@
   </script>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="site.webmanifest">
-  <link rel="stylesheet" href="css/styles.css?v=0.7.1">
+  <link rel="stylesheet" href="css/styles.css?v=0.8.0">
 </head>
 <body>
   <a class="skip-link" href="#app">Skip to content</a>
@@ -115,7 +115,7 @@
     <section id="tab-catches" class="tab-page">
       <header class="page-intro">
         <div><span class="eyebrow">TEAM SHINY BOARD</span><h1 class="page-title">Caught shinies, arranged by value.</h1><p id="catchPageDescription">Bundled team data using the same format as the future live pipeline.</p></div>
-        <button id="refreshCatches" class="pixel-btn ghost" type="button">Refresh view</button>
+        <button id="refreshCatches" class="pixel-btn ghost" type="button">Reload deployed data</button>
       </header>
       <div id="remoteCatchNotice" class="notice hidden"></div>
 
@@ -191,9 +191,10 @@
         <section class="setting-card"><h2>Encounters per hour</h2><div id="methodSettings" class="settings-grid"></div></section>
       </div>
       <section class="setting-card pipeline-card">
-        <span class="panel-kicker">DATA CONTRACT READY</span>
+        <span class="panel-kicker">LIVE PIPELINE CONNECTED</span>
         <h2>Google Sheet → GitHub Action → <code>data/live/state.json</code></h2>
-        <p>This version already reads its team data from the same-origin JSON file that the later importer will generate. The bundled file starts empty. The Google Sheet importer will generate and replace it after GitHub publication.</p>
+        <p>The published team and Settings tabs are imported during deployment. Visitors only read same-origin JSON from GitHub Pages; Google is never contacted by their browser.</p>
+        <p><a href="data/live/import-report.json" target="_blank" rel="noopener">Open the latest import report</a></p>
       </section>
       <section class="setting-card">
         <h2>Backup & preview</h2>
@@ -230,7 +231,7 @@
     </section>
   </main>
 
-  <footer class="site-footer"><span>WARtool v0.7.1 · GitHub release candidate</span><span>Encounter data from the PokeMMO client dump</span></footer>
+  <footer class="site-footer"><span>WARtool v0.8.0 · live Sheet pipeline</span><span>Encounter data from the PokeMMO client dump</span></footer>
 
   <dialog id="spotDialog" class="spot-dialog">
     <form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form>
@@ -239,12 +240,12 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="data/meta.js?v=0.7.1"></script>
-  <script src="data/pokemon.js?v=0.7.1"></script>
-  <script src="data/groups.js?v=0.7.1"></script>
-  <script src="data/live-config.js?v=0.7.1"></script>
-  <script src="data/roster.js?v=0.7.1"></script>
-  <script src="data/preview.js?v=0.7.1"></script>
-  <script src="js/app.js?v=0.7.1"></script>
+  <script src="data/meta.js?v=0.8.0"></script>
+  <script src="data/pokemon.js?v=0.8.0"></script>
+  <script src="data/groups.js?v=0.8.0"></script>
+  <script src="data/live-config.js?v=0.8.0"></script>
+  <script src="data/roster.js?v=0.8.0"></script>
+  <script src="data/preview.js?v=0.8.0"></script>
+  <script src="js/app.js?v=0.8.0"></script>
 </body>
 </html>

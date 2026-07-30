@@ -1,6 +1,7 @@
-WARtool v0.7.1 maintenance files
+WARtool v0.8.0 maintenance files
 
-validate_static.py - full release data/static validation
-build_static_site.py - builds the GitHub Pages _site artifact
-rebuild_encounters.py - rebuilds encounter groups from a PokeMMO dump
-shiny_wars_optimizer.py - maintenance calculation/export utility
+- import_google_sheet.py: fetches and validates the two team catch tabs and Settings tab
+- rebuild_encounters.py: rebuilds planner encounter groups from a PokeMMO dump
+- validate_static.py: audits the complete project before deployment
+- build_static_site.py: creates the GitHub Pages _site artifact
+- GOOGLE_SHEET_SETUP.md: Sheet column and validation contract

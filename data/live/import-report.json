@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "success": false,
+  "generatedAt": "2026-07-30T16:28:00Z",
+  "teams": [],
+  "settings": {},
+  "warnings": [],
+  "fatalError": "The GitHub Action has not run the Google Sheet importer yet."
+}

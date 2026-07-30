@@ -588,7 +588,7 @@ def main() -> int:
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
         },
-        "siteVersion": "0.7.1",
+        "siteVersion": "0.8.0",
         "generatedAt": "2026-07-30",
         "encounterSource": "PokeMMO moddable resources dump uploaded 2026-07-30",
         "encounterDumpSha256": dump_hash,

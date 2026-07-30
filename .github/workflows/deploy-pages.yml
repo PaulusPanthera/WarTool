@@ -1,9 +1,12 @@
-name: Validate and deploy WARtool
+name: Import live data and deploy WARtool
 
 on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    # Every five minutes, offset from minute 0 to reduce scheduler congestion.
+    - cron: "2-57/5 * * * *"
 
 permissions:
   contents: read
@@ -30,6 +33,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+
+      - name: Import live Google Sheet data
+        env:
+          # Optional repository variables override the committed public URLs.
+          TEAM_SURPRISE_CSV_URL: ${{ vars.TEAM_SURPRISE_CSV_URL }}
+          TEAM_MORE_LIKE_IT_CSV_URL: ${{ vars.TEAM_MORE_LIKE_IT_CSV_URL }}
+          WAR_SETTINGS_CSV_URL: ${{ vars.WAR_SETTINGS_CSV_URL }}
+        run: python tools/import_google_sheet.py
 
       - name: Validate WARtool data and static paths
         run: python tools/validate_static.py

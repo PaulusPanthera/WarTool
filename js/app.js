@@ -82,6 +82,14 @@ function formatDate(value) {
   const date = new Date(value);
   return Number.isNaN(date.valueOf()) ? "Unknown" : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
+function formatCatchDate(item) {
+  if (item?.dateMissing) return "Date not entered";
+  const date = new Date(item?.caughtAt);
+  if (Number.isNaN(date.valueOf())) return "Unknown";
+  return item?.dateOnly
+    ? date.toLocaleDateString(undefined, { dateStyle: "medium" })
+    : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
 function localDateInputValue(date = new Date()) {
   const pad = n => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
@@ -695,6 +703,8 @@ function normalizeStaticCatch(item, index) {
     pokemonId: pokemon.id,
     line: pokemon.line,
     caughtAt: caughtAt.toISOString(),
+    dateOnly: boolValue(item?.dateOnly),
+    dateMissing: boolValue(item?.dateMissing),
     secret: boolValue(item?.secret),
     alpha: boolValue(item?.alpha),
     safari: boolValue(item?.safari),
@@ -1081,7 +1091,7 @@ function renderCatches() {
       shiny: true,
       score: scored.total,
       flag: item.secret ? "S" : item.alpha ? "A" : item.safari ? "Z" : item.egg ? "E" : "",
-      tooltip: `${pokemon.name}\n${item.playerName || item.playerId} · ${formatDate(item.caughtAt)}\n${formatNumber(scored.total,0)} points${flags.length ? ` · ${flags.join(" · ")}` : ""}`
+      tooltip: `${pokemon.name}\n${item.playerName || item.playerId} · ${formatCatchDate(item)}\n${formatNumber(scored.total,0)} points${flags.length ? ` · ${flags.join(" · ")}` : ""}`
     });
   }
   for (const values of tierMap.values()) values.sort((a,b) => a.name.localeCompare(b.name) || a.subtitle.localeCompare(b.subtitle));
@@ -1091,7 +1101,7 @@ function renderCatches() {
     const pokemon = pokemonById.get(Number(item.pokemonId));
     const scored = context.scores.get(item.id) || { total:0, duplicate:false };
     const flags = [item.secret&&"Secret",item.alpha&&"Alpha",item.safari&&"Safari",item.egg&&"Egg",scored.duplicate&&"Duplicate"].filter(Boolean);
-    return `<article class="catch-row"><img src="${sprite(pokemon.id,true)}" alt=""><div><strong>${escapeHtml(pokemon.name)}</strong><small>${escapeHtml(item.playerName || item.playerId)} · ${formatDate(item.caughtAt)} · Tier ${pokemon.tier}</small><div class="catch-meta">${flags.map(flag => `<span class="flag">${escapeHtml(flag)}</span>`).join("")}${item.note ? `<span class="flag">${escapeHtml(item.note)}</span>` : ""}</div></div><div><div class="score-badge">${formatNumber(scored.total,0)} pts</div>${remoteMode ? "" : `<button class="icon-button" data-delete-catch="${item.id}" title="Delete">×</button>`}</div></article>`;
+    return `<article class="catch-row"><img src="${sprite(pokemon.id,true)}" alt=""><div><strong>${escapeHtml(pokemon.name)}</strong><small>${escapeHtml(item.playerName || item.playerId)} · ${formatCatchDate(item)} · Tier ${pokemon.tier}</small><div class="catch-meta">${flags.map(flag => `<span class="flag">${escapeHtml(flag)}</span>`).join("")}${item.note ? `<span class="flag">${escapeHtml(item.note)}</span>` : ""}</div></div><div><div class="score-badge">${formatNumber(scored.total,0)} pts</div>${remoteMode ? "" : `<button class="icon-button" data-delete-catch="${item.id}" title="Delete">×</button>`}</div></article>`;
   }).join("");
   $("#catchEmpty").classList.toggle("hidden", catches.length > 0);
   $$('[data-delete-catch]').forEach(button => button.addEventListener("click", () => deleteCatch(button.dataset.deleteCatch)));
@@ -1261,7 +1271,11 @@ function bindEvents() {
   $("#exportState").addEventListener("click", exportState);
   $("#quickExport")?.addEventListener("click", exportState);
   $("#quickRefresh")?.addEventListener("click", () => toast("Bundled team data is already loaded."));
-  $("#refreshCatches").addEventListener("click", () => { renderAll(); toast("Team view refreshed."); });
+  $("#refreshCatches").addEventListener("click", async () => {
+    await loadStaticLiveState();
+    renderAll();
+    toast("Latest deployed team data loaded.");
+  });
   $("#clearCatches").addEventListener("click", clearCatches);
   $("#qualityLevel").addEventListener("change", renderQuality);
   $("#importState").addEventListener("change", async event => {

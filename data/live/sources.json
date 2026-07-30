@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "refreshMinutes": 5,
+  "sources": {
+    "team1": {
+      "label": "MÜSH To My Surprise",
+      "url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpEXQt9lcKY5WmgHkAAfKDwMRB96WpZtH8GHxrdA0fEW7_mA9n27TLCdpyy5CSZp_xkd5YfXmdDO3Y/pub?gid=1080256717&single=true&output=csv"
+    },
+    "team2": {
+      "label": "MÜSH More Like It",
+      "url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpEXQt9lcKY5WmgHkAAfKDwMRB96WpZtH8GHxrdA0fEW7_mA9n27TLCdpyy5CSZp_xkd5YfXmdDO3Y/pub?gid=1113023649&single=true&output=csv"
+    },
+    "settings": {
+      "label": "WAR settings",
+      "url": "https://docs.google.com/spreadsheets/d/e/2PACX-1vRpEXQt9lcKY5WmgHkAAfKDwMRB96WpZtH8GHxrdA0fEW7_mA9n27TLCdpyy5CSZp_xkd5YfXmdDO3Y/pub?gid=1365503836&single=true&output=csv"
+    }
+  }
+}

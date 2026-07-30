@@ -121,8 +121,9 @@ def main() -> int:
 
     required = [
         "index.html", "css/styles.css", "js/app.js", "data/groups.js", "data/pokemon.js",
-        "data/meta.js", "data/roster.js", "data/live/state.json", "favicon.svg", "site.webmanifest",
-        ".nojekyll", "server.py", "START_WARTOOL.bat", "tools/rebuild_encounters.py",
+        "data/meta.js", "data/roster.js", "data/live/state.json", "data/live/import-report.json",
+        "data/live/sources.json", "favicon.svg", "site.webmanifest", ".nojekyll", "server.py",
+        "START_WARTOOL.bat", "tools/rebuild_encounters.py", "tools/import_google_sheet.py",
     ]
     for relative in required:
         if not (ROOT / relative).is_file():
@@ -140,9 +141,11 @@ def main() -> int:
         meta = load_assignment(ROOT / "data/meta.js", "WAR_META")
         roster = load_assignment(ROOT / "data/roster.js", "WAR_ROSTER")
         live = json.loads((ROOT / "data/live/state.json").read_text(encoding="utf-8"))
+        import_report = json.loads((ROOT / "data/live/import-report.json").read_text(encoding="utf-8"))
+        live_sources = json.loads((ROOT / "data/live/sources.json").read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError, KeyError) as error:
         fail(errors, f"Data parsing failed: {error}")
-        groups, validation, pokemon, meta, roster, live = [], {}, [], {}, [], {}
+        groups, validation, pokemon, meta, roster, live, import_report, live_sources = [], {}, [], {}, [], {}, {}, {}
 
     # HTML and local assets.
     parser = IdParser()
@@ -185,8 +188,8 @@ def main() -> int:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.7.1":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.7.1'.")
+    if meta.get("siteVersion") != "0.8.0":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.0'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -305,7 +308,24 @@ def main() -> int:
     if len(roster_keys) != len(set(roster_keys)):
         fail(errors, "Duplicate player id inside a team roster.")
 
-    # Same-origin live-state contract.
+    # Same-origin live-state contract and Google Sheet import pipeline.
+    if live_sources.get("schemaVersion") != 1:
+        fail(errors, "Live-source configuration schemaVersion must be 1.")
+    configured_sources = live_sources.get("sources") if isinstance(live_sources.get("sources"), dict) else {}
+    expected_gids = {"team1": "1080256717", "team2": "1113023649", "settings": "1365503836"}
+    for source_name, gid in expected_gids.items():
+        source = configured_sources.get(source_name) if isinstance(configured_sources.get(source_name), dict) else {}
+        url = str(source.get("url", ""))
+        if not re.fullmatch(rf"https://docs\.google\.com/spreadsheets/d/e/2PACX-[^?]+/pub\?[^#]*gid={gid}[^#]*output=csv[^#]*", url):
+            fail(errors, f"Live source {source_name} is missing or is not the expected published CSV gid {gid}.")
+    if import_report.get("schemaVersion") != 1:
+        fail(errors, "Import-report schemaVersion must be 1.")
+    workflow_text = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
+    if "schedule:" not in workflow_text or "tools/import_google_sheet.py" not in workflow_text:
+        fail(errors, "GitHub Pages workflow is not wired to the scheduled Google Sheet importer.")
+    if "2-57/5 * * * *" not in workflow_text:
+        fail(errors, "Expected five-minute live-data schedule is missing from the workflow.")
+
     if live.get("schemaVersion") != 1:
         fail(errors, f"Live-state schemaVersion must be 1, found {live.get('schemaVersion')!r}")
     if live.get("mode") not in {"preview", "demo", "live"}:
@@ -345,7 +365,7 @@ def main() -> int:
         f"Sprites: {len(pokemon) * 2:,} normal/shiny files verified",
         f"Roster: {sum(team_counts.values())} players across {len(team_counts)} separate teams",
         f"Packaged team data: {packaged_count} catches scoring {packaged_total} points",
-        "GitHub Pages paths, no-cache local server, and JSON live-data contract verified",
+        "GitHub Pages paths, scheduled Google Sheet importer, and same-origin JSON contract verified",
     ])
 
     if errors:

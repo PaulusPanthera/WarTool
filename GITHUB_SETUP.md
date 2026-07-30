@@ -1,60 +1,68 @@
-# GitHub Pages setup
+# GitHub Pages and live Google Sheet setup
 
-## 1. Create the repository
+The repository is already structured for GitHub Desktop and GitHub Pages.
 
-Create an empty GitHub repository, for example:
+## Normal publishing workflow
 
-```text
-WARtool
-```
+1. Edit files inside the one local folder connected to GitHub Desktop.
+2. Review the changes in GitHub Desktop.
+3. Commit to `main`.
+4. Push origin.
+5. Open the repository's **Actions** tab and watch **Import live data and deploy WARtool**.
 
-Do not initialize it with a different README or workflow if you are uploading this folder directly.
+The workflow imports the current Sheet data, validates the whole project, builds
+`_site`, and deploys it to GitHub Pages.
 
-## 2. Upload the contents of `H_Wartool`
+## Automatic live updates
 
-The repository root must contain:
+The same workflow runs every five minutes. It does not create automated commits
+or fill the Git history with generated catch data. Each run generates
+`data/live/state.json` only inside the temporary deployment workspace.
 
-```text
-index.html
-.github/
-assets/
-css/
-data/
-js/
-tools/
-```
+A failed Sheet import stops that new deployment, so the last successful public
+version stays online.
 
-Do not upload the outer ZIP or an additional `H_Wartool/H_Wartool` nesting level.
+## Source configuration
 
-## 3. Enable GitHub Pages
-
-Open the repository:
+The active published CSV links are committed in:
 
 ```text
-Settings → Pages → Build and deployment → Source → GitHub Actions
+data/live/sources.json
 ```
 
-## 4. Push to `main`
+Because the links are public, no secret is required. Repository variables may
+optionally override them under:
 
-The included workflow will:
+```text
+Settings → Secrets and variables → Actions → Variables
+```
 
-1. validate all encounter, tier, sprite, roster and live-state data
-2. check `js/app.js` syntax
-3. build the public `_site` directory
-4. upload and deploy the GitHub Pages artifact
+Supported variable names:
 
-The first deployment normally appears under the repository's **Actions** tab.
+```text
+TEAM_SURPRISE_CSV_URL
+TEAM_MORE_LIKE_IT_CSV_URL
+WAR_SETTINGS_CSV_URL
+```
 
-## 5. Confirm the deployment
+## Manual refresh
 
-Open the Pages URL shown by the completed `deploy` job. Verify:
+Open:
 
-- Rankings loads
-- Caught Shinies starts clean with zero bundled catches
-- Tier Progress shows 282 lines
-- switching between both MÜSH teams works
-- the Data page reports zero fatal validation errors
+```text
+Actions → Import live data and deploy WARtool → Run workflow
+```
 
-## Not connected yet
+After the run is green, reload the public website. The Caught Shinies page also
+has a **Reload deployed data** button for the latest already-deployed JSON.
 
-Do not paste Google Sheet links into the website. The next patch will add a separate GitHub Action that reads the published Sheet tabs and writes `data/live/state.json` before deployment.
+## Import report
+
+The deployed report is available at:
+
+```text
+data/live/import-report.json
+```
+
+It lists accepted catches, rejected rows, settings values, and validation
+warnings for the latest successful deployment.
