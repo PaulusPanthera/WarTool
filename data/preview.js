@@ -1,0 +1,1 @@
+window.WAR_PREVIEW_CATCHES = [];

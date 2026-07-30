@@ -1,0 +1,24 @@
+﻿Setting,Value
+baseShinyDenominator,30000
+eventWildBoost,0.1
+uniqueBonus,8
+secretBonus,20
+secretChance,0.0625
+safariBonus,10
+safariCatchChance,1
+method.5x Horde,1200
+method.5x Horde (Slowed),1000
+method.3x Horde,720
+method.3x Horde (Slowed),600
+method.Lure Singles,280
+method.Singles,220
+method.Safari Singles,300
+method.Lure Safari Singles,300
+method.Fishing,270
+method.Fishing + Lure,340
+method.Fishing + Chum Bucket,400
+method.Fishing + Lure + Chum Bucket,500
+method.Rock Smash,120
+method.Headbutt,120
+method.Honey Tree,60
+method.Fossil,120

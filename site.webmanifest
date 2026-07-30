@@ -1,0 +1,17 @@
+{
+  "name": "WARtool · PokeMMO Shiny Wars",
+  "short_name": "WARtool",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#eef6e7",
+  "theme_color": "#2d6a4f",
+  "description": "PokeMMO Shiny Wars hunting optimizer and team tier-progress board.",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

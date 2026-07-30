@@ -1,0 +1,1313 @@
+"use strict";
+
+const GROUPS = window.WAR_GROUPS || [];
+const VALIDATION = window.WAR_VALIDATION || { summary: {}, issues: [] };
+const POKEMON = window.WAR_POKEMON || [];
+const META = window.WAR_META || {};
+const PACKAGED_LIVE_CONFIG = window.WAR_LIVE_CONFIG || {};
+const PACKAGED_ROSTER = window.WAR_ROSTER || [];
+const PACKAGED_PREVIEW_CATCHES = window.WAR_PREVIEW_CATCHES || [];
+const LIVE_STATE_URL = "data/live/state.json";
+
+const $ = (selector, root = document) => root.querySelector(selector);
+const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+const STORAGE_KEY = META.storageKey || "pokemmo-wartool-state-v3";
+const OLD_STORAGE_KEYS = ["pokemmo-wartool-state-v6", "pokemmo-wartool-state-v5", "pokemmo-wartool-state-v4", "pokemmo-wartool-state-v3", "pokemmo-wartool-state-v2", "pokemmo-wartool-state-v1"];
+
+const DEFAULT_SETTINGS = {
+  baseShinyDenominator: 30000,
+  eventWildBoost: 0.10,
+  uniqueBonus: 8,
+  secretBonus: 20,
+  secretChance: 1 / 16,
+  safariBonus: 10,
+  safariCatchChance: 1,
+  methodSpeeds: {
+    "5x Horde": 1200,
+    "5x Horde (Slowed)": 1000,
+    "3x Horde": 720,
+    "3x Horde (Slowed)": 600,
+    "Lure Singles": 280,
+    "Singles": 220,
+    "Safari Singles": 300,
+    "Lure Safari Singles": 300,
+    "Fishing": 270,
+    "Fishing + Lure": 340,
+    "Fishing + Chum Bucket": 400,
+    "Fishing + Lure + Chum Bucket": 500,
+    "Rock Smash": 120,
+    "Headbutt": 120,
+    "Honey Tree": 60,
+    "Fossil": 120
+  }
+};
+
+const DEFAULT_STATE = {
+  version: 7,
+  settings: structuredClone(DEFAULT_SETTINGS),
+  players: structuredClone(PACKAGED_ROSTER),
+  selectedTeamId: PACKAGED_ROSTER[0]?.teamId || "",
+  catches: structuredClone(PACKAGED_PREVIEW_CATCHES),
+  liveConfig: {
+    team1CatchesCsvUrl: "",
+    team2CatchesCsvUrl: "",
+    settingsCsvUrl: "",
+    refreshSeconds: Number(PACKAGED_LIVE_CONFIG.refreshSeconds || 60)
+  }
+};
+
+const pokemonById = new Map(POKEMON.map(p => [Number(p.id), p]));
+const pokemonByName = new Map(POKEMON.map(p => [normalize(p.name), p]));
+const lineInfo = buildLineInfo();
+
+let state = loadState();
+let remote = { mode: "fallback", source: "Bundled fallback", roster: null, catches: null, settings: null, errors: [], lastUpdated: null };
+let currentRankingRows = [];
+let liveRefreshTimer = null;
+let saveTimer = null;
+
+function normalize(value) {
+  return String(value || "").trim().toLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9♀♂]+/g, "");
+}
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"}[c]));
+}
+function formatNumber(value, digits = 4) {
+  return Number(value || 0).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+}
+function formatPercent(value, digits = 1) {
+  return `${(Number(value || 0) * 100).toFixed(digits)}%`;
+}
+function formatDate(value) {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? "Unknown" : date.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+function localDateInputValue(date = new Date()) {
+  const pad = n => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+function uid(prefix = "id") {
+  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
+}
+function sprite(id, shiny = false) {
+  return `assets/sprites/${id}${shiny ? "-shiny" : ""}.png`;
+}
+function currentTheme() {
+  return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
+}
+function setTheme(theme) {
+  const next = theme === "dark" ? "dark" : "light";
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem("wartool.theme", next);
+  const button = $("#themeToggle");
+  if (button) {
+    button.textContent = next === "dark" ? "☀" : "☾";
+    button.title = next === "dark" ? "Use light theme" : "Use dark theme";
+  }
+}
+function toggleTheme() {
+  setTheme(currentTheme() === "dark" ? "light" : "dark");
+}
+function buildLineInfo() {
+  const map = new Map();
+  for (const p of POKEMON) {
+    if (!map.has(p.line)) map.set(p.line, { line: p.line, tier: p.tier, points: p.points, pokemon: [], spriteId: p.id });
+    const info = map.get(p.line);
+    info.pokemon.push(p);
+    if (p.id < info.spriteId) info.spriteId = p.id;
+  }
+  return [...map.values()].sort((a, b) => a.tier - b.tier || a.line.localeCompare(b.line));
+}
+function deepMergeSettings(value) {
+  const source = value && typeof value === "object" ? value : {};
+  return {
+    ...structuredClone(DEFAULT_SETTINGS),
+    ...source,
+    methodSpeeds: { ...DEFAULT_SETTINGS.methodSpeeds, ...(source.methodSpeeds || {}) }
+  };
+}
+function loadState() {
+  try {
+    let raw = localStorage.getItem(STORAGE_KEY);
+    const currentStateFound = Boolean(raw);
+    if (!raw) {
+      for (const key of OLD_STORAGE_KEYS) {
+        raw = localStorage.getItem(key);
+        if (raw) break;
+      }
+    }
+    if (!raw) return structuredClone(DEFAULT_STATE);
+    const parsed = JSON.parse(raw);
+    const rosterById = new Map(PACKAGED_ROSTER.map(p => [p.id, { ...p }]));
+    for (const player of Array.isArray(parsed.players) ? parsed.players : []) {
+      const id = player.id || normalize(player.name);
+      const packaged = rosterById.get(id);
+      rosterById.set(id, {
+        ...packaged,
+        ...player,
+        id,
+        name: player.name || packaged?.name || id,
+        teamId: player.teamId || packaged?.teamId || DEFAULT_STATE.selectedTeamId,
+        teamName: player.teamName || packaged?.teamName || PACKAGED_ROSTER[0]?.teamName || "Team",
+        teamOrder: Number(player.teamOrder || packaged?.teamOrder || 99),
+        active: player.active !== false
+      });
+    }
+    const players = [...rosterById.values()];
+    const migratedCatches = Array.isArray(parsed.catches) ? parsed.catches
+      .filter(item => !(String(item?.id || "").startsWith("preview-surprise-") && String(item?.note || "") === "Static design-preview catch"))
+      .map(item => {
+        const packaged = rosterById.get(item.playerId);
+        return {
+          ...item,
+          teamId: item.teamId || packaged?.teamId || parsed.selectedTeamId || DEFAULT_STATE.selectedTeamId,
+          teamName: item.teamName || packaged?.teamName || PACKAGED_ROSTER[0]?.teamName || "Team"
+        };
+      }) : [];
+    const catches = currentStateFound || migratedCatches.length
+      ? migratedCatches
+      : structuredClone(PACKAGED_PREVIEW_CATCHES);
+    return {
+      version: 7,
+      settings: deepMergeSettings(parsed.settings),
+      players,
+      selectedTeamId: parsed.selectedTeamId || players[0]?.teamId || DEFAULT_STATE.selectedTeamId,
+      catches,
+      liveConfig: structuredClone(DEFAULT_STATE.liveConfig)
+    };
+  } catch (error) {
+    console.error(error);
+    return structuredClone(DEFAULT_STATE);
+  }
+}
+function saveState(message = "Saved locally") {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  const status = $("#saveStatus");
+  if (status) {
+    status.textContent = message;
+    status.classList.add("flash");
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => status.classList.remove("flash"), 900);
+  }
+}
+function packagedOrLocalConfig() {
+  return {
+    team1CatchesCsvUrl: String(state.liveConfig.team1CatchesCsvUrl || PACKAGED_LIVE_CONFIG.team1CatchesCsvUrl || "").trim(),
+    team2CatchesCsvUrl: String(state.liveConfig.team2CatchesCsvUrl || PACKAGED_LIVE_CONFIG.team2CatchesCsvUrl || "").trim(),
+    settingsCsvUrl: String(state.liveConfig.settingsCsvUrl || PACKAGED_LIVE_CONFIG.settingsCsvUrl || "").trim(),
+    // v0.3 fallback fields remain readable for migration.
+    rosterCsvUrl: String(state.liveConfig.rosterCsvUrl || PACKAGED_LIVE_CONFIG.rosterCsvUrl || "").trim(),
+    catchesCsvUrl: String(state.liveConfig.catchesCsvUrl || PACKAGED_LIVE_CONFIG.catchesCsvUrl || "").trim(),
+    refreshSeconds: Number(state.liveConfig.refreshSeconds ?? PACKAGED_LIVE_CONFIG.refreshSeconds ?? 60)
+  };
+}
+function getEffectiveSettings() {
+  const local = deepMergeSettings(state.settings);
+  if (!remote.settings) return local;
+  return deepMergeSettings({
+    ...local,
+    ...remote.settings,
+    methodSpeeds: { ...local.methodSpeeds, ...(remote.settings.methodSpeeds || {}) }
+  });
+}
+function currentRoster() {
+  const source = Array.isArray(remote.roster) && remote.roster.length ? remote.roster : state.players;
+  return source.filter(player => player.active !== false);
+}
+function allActiveCatches() {
+  return Array.isArray(remote.catches) ? remote.catches : state.catches;
+}
+function allTeams() {
+  const map = new Map();
+  for (const player of currentRoster()) {
+    if (!player.teamId) continue;
+    if (!map.has(player.teamId)) map.set(player.teamId, { id: player.teamId, name: player.teamName || player.teamId, order: Number(player.teamOrder || 99) });
+  }
+  for (const item of allActiveCatches()) {
+    if (!item.teamId) continue;
+    if (!map.has(item.teamId)) map.set(item.teamId, { id: item.teamId, name: item.teamName || item.teamId, order: 99 });
+  }
+  return [...map.values()].sort((a,b) => a.order - b.order || a.name.localeCompare(b.name));
+}
+function selectedTeamId() {
+  const teams = allTeams();
+  if (!teams.length) return "";
+  if (!teams.some(team => team.id === state.selectedTeamId)) state.selectedTeamId = teams[0].id;
+  return state.selectedTeamId;
+}
+function selectedTeamName() {
+  const id = selectedTeamId();
+  return allTeams().find(team => team.id === id)?.name || "Team";
+}
+function activeCatches(teamId = selectedTeamId()) {
+  return allActiveCatches().filter(item => !teamId || item.teamId === teamId);
+}
+function isRemoteCatchMode() {
+  return Array.isArray(remote.catches);
+}
+function allPlayers(teamId = selectedTeamId()) {
+  const map = new Map();
+  for (const player of currentRoster()) {
+    if (teamId && player.teamId !== teamId) continue;
+    map.set(player.id, { ...player });
+  }
+  for (const item of activeCatches(teamId)) {
+    if (!map.has(item.playerId)) map.set(item.playerId, {
+      id: item.playerId,
+      name: item.playerName || item.playerId,
+      teamId: item.teamId || teamId,
+      teamName: item.teamName || selectedTeamName(),
+      teamOrder: 99,
+      active: true
+    });
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+function teamForPlayer(playerName, explicitTeamName = "") {
+  const playerId = normalize(playerName);
+  const rosterPlayer = currentRoster().find(player => player.id === playerId);
+  const fallbackTeam = allTeams()[0] || { id: DEFAULT_STATE.selectedTeamId, name: PACKAGED_ROSTER[0]?.teamName || "Team" };
+  const teamName = rosterPlayer?.teamName || String(explicitTeamName || "").trim() || fallbackTeam.name;
+  const teamId = rosterPlayer?.teamId || normalize(teamName) || fallbackTeam.id;
+  return { teamId, teamName };
+}
+function eligibleSecret(method) {
+  return !String(method).includes("Horde");
+}
+function shinyDenominatorForMethod(method, settings) {
+  const wildBoost = method === "Fossil" ? 0 : Number(settings.eventWildBoost || 0);
+  return Number(settings.baseShinyDenominator || 30000) / (1 + wildBoost);
+}
+function getCatchContext(teamId = selectedTeamId()) {
+  const settings = getEffectiveSettings();
+  const sorted = [...activeCatches(teamId)].sort((a,b) => new Date(a.caughtAt) - new Date(b.caughtAt) || String(a.id).localeCompare(String(b.id)));
+  const teamLines = new Set();
+  const playerLines = new Map();
+  const scores = new Map();
+  const playerTotals = new Map();
+  let teamTotal = 0;
+  for (const catchItem of sorted) {
+    const p = pokemonById.get(Number(catchItem.pokemonId));
+    if (!p) continue;
+    const line = catchItem.line || p.line;
+    const seenTeam = teamLines.has(line);
+    const seenPlayer = playerLines.get(catchItem.playerId) || new Set();
+    const duplicate = seenPlayer.has(line);
+    let base;
+    if (duplicate) base = catchItem.alpha ? 35 : 1;
+    else if (catchItem.alpha) base = 75;
+    else if (catchItem.egg) base = Math.max(35, p.points);
+    else base = p.points;
+    const unique = seenTeam ? 0 : Number(settings.uniqueBonus);
+    const secret = catchItem.secret ? Number(settings.secretBonus) : 0;
+    const safari = catchItem.safari ? Number(settings.safariBonus) : 0;
+    const total = base + unique + secret + safari;
+    scores.set(catchItem.id, { total, base, unique, secret, safari, duplicate, line });
+    teamLines.add(line);
+    seenPlayer.add(line);
+    playerLines.set(catchItem.playerId, seenPlayer);
+    teamTotal += total;
+    playerTotals.set(catchItem.playerId, (playerTotals.get(catchItem.playerId) || 0) + total);
+  }
+  return { teamLines, playerLines, scores, playerTotals, teamTotal };
+}
+function scoreGroup(group, mode, playerId, context = getCatchContext()) {
+  const settings = getEffectiveSettings();
+  const selectedPlayerLines = context.playerLines.get(playerId) || new Set();
+  let weighted = 0;
+  let missingShare = 0;
+  const detail = group.components.map(c => {
+    const missingTeam = !context.teamLines.has(c.line);
+    const duplicatePlayer = selectedPlayerLines.has(c.line);
+    let score = c.points;
+    if (mode === "fresh") score = c.points + settings.uniqueBonus;
+    else if (mode === "base") score = c.points;
+    else if (mode === "team") score = c.points + (missingTeam ? settings.uniqueBonus : 0);
+    else if (mode === "player") score = (duplicatePlayer ? 1 : c.points) + (missingTeam ? settings.uniqueBonus : 0);
+    else if (mode === "duplicate") score = 1;
+    weighted += c.share * score;
+    if (missingTeam) missingShare += c.share;
+    return { ...c, score, missingTeam, duplicatePlayer };
+  });
+  const secretEV = eligibleSecret(group.method) ? settings.secretBonus * settings.secretChance : 0;
+  const safariEV = group.safari ? settings.safariBonus : 0;
+  const average = weighted + secretEV + safariEV;
+  const encountersPerHour = Number(settings.methodSpeeds[group.method] || 0);
+  const denominator = shinyDenominatorForMethod(group.method, settings);
+  const catchMultiplier = group.safari ? settings.safariCatchChance : 1;
+  const pointsPerHour = encountersPerHour / denominator * average * catchMultiplier;
+  return { average, encountersPerHour, denominator, catchMultiplier, pointsPerHour, detail, missingShare, secretEV, safariEV, settings };
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let row = [], field = "", quoted = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (quoted) {
+      if (ch === '"' && text[i+1] === '"') { field += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else field += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(field); field = ""; }
+    else if (ch === '\n') { row.push(field.replace(/\r$/, "")); rows.push(row); row = []; field = ""; }
+    else field += ch;
+  }
+  if (field.length || row.length) { row.push(field.replace(/\r$/, "")); rows.push(row); }
+  return rows.filter(r => r.some(v => String(v).trim() !== ""));
+}
+function csvObjects(text) {
+  const rows = parseCsv(text);
+  if (!rows.length) return [];
+  const headers = rows[0].map(h => normalize(h));
+  return rows.slice(1).map((row, index) => {
+    const obj = { _row: index + 2 };
+    headers.forEach((h, i) => { obj[h] = row[i] ?? ""; });
+    return obj;
+  });
+}
+function firstField(row, names) {
+  for (const name of names) if (row[normalize(name)] !== undefined && String(row[normalize(name)]).trim() !== "") return row[normalize(name)];
+  return "";
+}
+function boolValue(value) {
+  return ["1","true","yes","y","x","ja"].includes(String(value || "").trim().toLowerCase());
+}
+function numericValue(value) {
+  const text = String(value ?? "").trim().replace(",", ".");
+  if (!text) return null;
+  if (text.endsWith("%")) {
+    const n = Number(text.slice(0, -1));
+    return Number.isFinite(n) ? n / 100 : null;
+  }
+  const n = Number(text);
+  return Number.isFinite(n) ? n : null;
+}
+function parseRemoteDate(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return null;
+  const german = raw.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (german) {
+    const [, day, month, year, hour = "0", minute = "0", second = "0"] = german;
+    const date = new Date(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute), Number(second));
+    return Number.isNaN(date.valueOf()) ? null : date;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.valueOf()) ? null : parsed;
+}
+function parseRemoteRoster(text) {
+  const players = [], errors = [];
+  let teamOrder = 0;
+  const teamOrders = new Map();
+  for (const row of csvObjects(text)) {
+    const teamName = String(firstField(row, ["Team", "Team Name"])).trim();
+    const playerName = String(firstField(row, ["Player", "IGN", "Name"])).trim();
+    if (!teamName && !playerName) continue;
+    if (!teamName || !playerName) {
+      errors.push(`Roster row ${row._row}: ${!teamName ? "missing team" : "missing player"}.`);
+      continue;
+    }
+    const activeRaw = firstField(row, ["Active", "Enabled"]);
+    const active = String(activeRaw).trim() === "" ? true : boolValue(activeRaw);
+    const teamId = normalize(teamName);
+    if (!teamOrders.has(teamId)) teamOrders.set(teamId, ++teamOrder);
+    players.push({
+      id: normalize(playerName),
+      name: playerName,
+      teamId,
+      teamName,
+      teamOrder: teamOrders.get(teamId),
+      active
+    });
+  }
+  return { roster: players, errors };
+}
+function parseRemoteCatches(text, forcedTeam = null) {
+  const result = [], errors = [];
+  for (const row of csvObjects(text)) {
+    const playerName = String(firstField(row, ["Player", "IGN", "Name"])).trim();
+    const pokemonName = String(firstField(row, ["Pokemon", "Pokémon", "Species"])).trim();
+    if (!playerName && !pokemonName) continue;
+    const pokemon = pokemonByName.get(normalize(pokemonName));
+    if (!playerName || !pokemon) {
+      errors.push(`Row ${row._row}: ${!playerName ? "missing player" : `unknown Pokémon “${pokemonName}”`}.`);
+      continue;
+    }
+    const rawDate = firstField(row, ["Date", "Caught At", "CaughtAt", "Time"]);
+    const parsedDate = parseRemoteDate(rawDate);
+    const caughtAt = parsedDate ? parsedDate.toISOString() : `2026-08-01T00:00:${String(row._row % 60).padStart(2,"0")}Z`;
+    const team = forcedTeam || teamForPlayer(playerName, firstField(row, ["Team", "Team Name"]));
+    result.push({
+      id: `sheet-${team.teamId}-${row._row}`,
+      source: "sheet",
+      playerId: normalize(playerName),
+      playerName,
+      teamId: team.teamId,
+      teamName: team.teamName,
+      pokemonId: pokemon.id,
+      line: pokemon.line,
+      caughtAt,
+      secret: boolValue(firstField(row, ["Secret", "Secret Shiny"])),
+      alpha: boolValue(firstField(row, ["Alpha"])),
+      safari: boolValue(firstField(row, ["Safari"])),
+      egg: boolValue(firstField(row, ["Egg"])),
+      note: String(firstField(row, ["Note", "Notes", "Location"])).trim()
+    });
+  }
+  return { catches: result, errors };
+}
+function parseRemoteSettings(text) {
+  const settings = { methodSpeeds: {} };
+  const errors = [];
+  const known = new Set(["baseShinyDenominator","eventWildBoost","uniqueBonus","secretBonus","secretChance","safariBonus","safariCatchChance"]);
+  for (const row of csvObjects(text)) {
+    const rawKey = String(firstField(row, ["Setting", "Key", "Name"])).trim();
+    const value = numericValue(firstField(row, ["Value", "Number"]));
+    if (!rawKey || value === null) continue;
+    if (rawKey.toLowerCase().startsWith("method.")) {
+      settings.methodSpeeds[rawKey.slice(7).trim()] = value;
+    } else if (known.has(rawKey)) settings[rawKey] = value;
+    else errors.push(`Settings row ${row._row}: unknown key “${rawKey}”.`);
+  }
+  if (!Object.keys(settings.methodSpeeds).length) delete settings.methodSpeeds;
+  return { settings, errors };
+}
+function cacheBust(url) {
+  const separator = url.includes("?") ? "&" : "?";
+  return `${url}${separator}_wartool=${Date.now()}`;
+}
+function csvCell(value) {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
+}
+function gvizCellValue(cell) {
+  if (!cell) return "";
+  if (cell.f !== undefined && cell.f !== null) return cell.f;
+  const value = cell.v;
+  if (value === undefined || value === null) return "";
+  if (value instanceof Date) {
+    const pad = number => String(number).padStart(2, "0");
+    return `${pad(value.getDate())}.${pad(value.getMonth() + 1)}.${value.getFullYear()}`;
+  }
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  return value;
+}
+function gvizResponseToCsv(response) {
+  if (!response || response.status === "error") {
+    const message = response?.errors?.map(error => error.detailed_message || error.message).filter(Boolean).join("; ") || "Google Sheets query failed";
+    throw new Error(message);
+  }
+  const table = response.table;
+  if (!table || !Array.isArray(table.cols) || !Array.isArray(table.rows)) throw new Error("Google Sheets returned no table data");
+  const headers = table.cols.map(column => column.label || column.id || "");
+  const lines = [headers.map(csvCell).join(",")];
+  for (const row of table.rows) {
+    const cells = row.c || [];
+    lines.push(headers.map((_, index) => csvCell(gvizCellValue(cells[index]))).join(","));
+  }
+  return lines.join("\n");
+}
+function googleSheetInfo(url) {
+  let parsed;
+  try { parsed = new URL(url, location.href); }
+  catch { return null; }
+  if (!/docs\.google\.com$/i.test(parsed.hostname) || !/\/spreadsheets\//i.test(parsed.pathname)) return null;
+  const published = parsed.pathname.match(/\/spreadsheets\/d\/e\/([^/]+)/i);
+  if (published) return {
+    kind: "published",
+    id: published[1],
+    gid: parsed.searchParams.get("gid") || new URLSearchParams(parsed.hash.replace(/^#/, "")).get("gid") || "0"
+  };
+  const documentMatch = parsed.pathname.match(/\/spreadsheets\/d\/([^/]+)/i);
+  if (!documentMatch) return null;
+  return {
+    kind: "document",
+    id: documentMatch[1],
+    gid: parsed.searchParams.get("gid") || new URLSearchParams(parsed.hash.replace(/^#/, "")).get("gid") || "0"
+  };
+}
+function googleSheetGvizUrl(url, callbackName) {
+  const info = googleSheetInfo(url);
+  if (!info || info.kind !== "document") return null;
+  const endpoint = new URL(`https://docs.google.com/spreadsheets/d/${info.id}/gviz/tq`);
+  endpoint.searchParams.set("gid", info.gid);
+  endpoint.searchParams.set("headers", "1");
+  endpoint.searchParams.set("range", "A:H");
+  endpoint.searchParams.set("tqx", `out:json;responseHandler:${callbackName}`);
+  endpoint.searchParams.set("_wartool", String(Date.now()));
+  return endpoint.toString();
+}
+function googleSheetCsvExportUrl(url) {
+  const info = googleSheetInfo(url);
+  if (!info) return url;
+  if (info.kind === "published") {
+    const endpoint = new URL(url);
+    endpoint.searchParams.set("gid", info.gid);
+    endpoint.searchParams.set("single", "true");
+    endpoint.searchParams.set("output", "csv");
+    endpoint.searchParams.delete("_wartool");
+    return endpoint.toString();
+  }
+  const endpoint = new URL(`https://docs.google.com/spreadsheets/d/${info.id}/export`);
+  endpoint.searchParams.set("format", "csv");
+  endpoint.searchParams.set("gid", info.gid);
+  return endpoint.toString();
+}
+function isLocalWarTool() {
+  return ["localhost", "127.0.0.1"].includes(location.hostname);
+}
+async function fetchThroughLocalServer(url) {
+  const target = googleSheetCsvExportUrl(url);
+  const endpoint = `/api/fetch-csv?url=${encodeURIComponent(target)}`;
+  const response = await fetch(cacheBust(endpoint), { cache: "no-store" });
+  const text = await response.text();
+  if (!response.ok) {
+    let message = `Local Sheet proxy returned HTTP ${response.status}`;
+    try {
+      const payload = JSON.parse(text);
+      message = payload.error || message;
+      if (payload.detail) message += ` · ${payload.detail}`;
+    } catch {}
+    throw new Error(message);
+  }
+  if (/^\s*</.test(text)) throw new Error("Google returned an HTML page instead of CSV. Publish the tab to the web as CSV, then use that 2PACX link.");
+  return text;
+}
+function fetchGoogleSheetJsonp(url) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `wartoolSheet_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+    const source = googleSheetGvizUrl(url, callbackName);
+    if (!source) { reject(new Error("This Google Sheets URL cannot use the JSONP fallback")); return; }
+    const script = document.createElement("script");
+    let finished = false;
+    const cleanup = () => {
+      try { delete window[callbackName]; } catch { window[callbackName] = undefined; }
+      script.remove();
+    };
+    const timeout = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      cleanup();
+      reject(new Error("Google Sheets request timed out"));
+    }, 15000);
+    window[callbackName] = response => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      try { resolve(gvizResponseToCsv(response)); }
+      catch (error) { reject(error); }
+      finally { cleanup(); }
+    };
+    script.onerror = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timeout);
+      cleanup();
+      reject(new Error("Google Sheets script request failed"));
+    };
+    script.src = source;
+    document.head.appendChild(script);
+  });
+}
+async function fetchCsv(url) {
+  if (isLocalWarTool()) return fetchThroughLocalServer(url);
+
+  const info = googleSheetInfo(url);
+  if (info?.kind === "document") return fetchGoogleSheetJsonp(url);
+
+  const response = await fetch(cacheBust(url), { cache: "no-store" });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  return await response.text();
+}
+async function loadLiveData(showToast = false) {
+  const config = packagedOrLocalConfig();
+  clearInterval(liveRefreshTimer);
+  remote = { roster: null, catches: null, settings: null, errors: [], lastUpdated: null };
+  const hasLive = config.team1CatchesCsvUrl || config.team2CatchesCsvUrl || config.settingsCsvUrl || config.rosterCsvUrl || config.catchesCsvUrl;
+  if (!hasLive) {
+    setLiveStatus("local", "Local preview data");
+    renderAll();
+    scheduleLiveRefresh(config.refreshSeconds);
+    if (showToast) toast("Using local preview data.");
+    return;
+  }
+  setLiveStatus("local", "Loading live data…");
+  const packagedTeams = [...new Map(PACKAGED_ROSTER.map(p => [p.teamId, { id:p.teamId, name:p.teamName, order:Number(p.teamOrder||99) }])).values()]
+    .sort((a,b) => a.order-b.order || a.name.localeCompare(b.name));
+  const jobs = [];
+  if (config.team1CatchesCsvUrl) jobs.push(fetchCsv(config.team1CatchesCsvUrl).then(text => ({ type:"team1", text })).catch(error => ({ type:"team1", error })));
+  if (config.team2CatchesCsvUrl) jobs.push(fetchCsv(config.team2CatchesCsvUrl).then(text => ({ type:"team2", text })).catch(error => ({ type:"team2", error })));
+  if (config.settingsCsvUrl) jobs.push(fetchCsv(config.settingsCsvUrl).then(text => ({ type:"settings", text })).catch(error => ({ type:"settings", error })));
+  // v0.3 fallback sources.
+  if (config.rosterCsvUrl) jobs.push(fetchCsv(config.rosterCsvUrl).then(text => ({ type:"roster", text })).catch(error => ({ type:"roster", error })));
+  if (config.catchesCsvUrl) jobs.push(fetchCsv(config.catchesCsvUrl).then(text => ({ type:"catches", text })).catch(error => ({ type:"catches", error })));
+  const results = await Promise.all(jobs);
+  const successful = new Map();
+  for (const result of results) {
+    if (result.error) remote.errors.push(`${result.type}: ${result.error.message}`);
+    else successful.set(result.type, result.text);
+  }
+  if (successful.has("roster")) {
+    const parsed = parseRemoteRoster(successful.get("roster"));
+    remote.roster = parsed.roster;
+    remote.errors.push(...parsed.errors);
+  }
+  if (successful.has("settings")) {
+    const parsed = parseRemoteSettings(successful.get("settings"));
+    remote.settings = parsed.settings;
+    remote.errors.push(...parsed.errors);
+  }
+  const combinedCatches = [];
+  if (successful.has("team1")) {
+    const parsed = parseRemoteCatches(successful.get("team1"), packagedTeams[0] || null);
+    combinedCatches.push(...parsed.catches); remote.errors.push(...parsed.errors);
+  }
+  if (successful.has("team2")) {
+    const parsed = parseRemoteCatches(successful.get("team2"), packagedTeams[1] || null);
+    combinedCatches.push(...parsed.catches); remote.errors.push(...parsed.errors);
+  }
+  if (successful.has("catches")) {
+    const parsed = parseRemoteCatches(successful.get("catches"));
+    combinedCatches.push(...parsed.catches); remote.errors.push(...parsed.errors);
+  }
+  if (successful.has("team1") || successful.has("team2") || successful.has("catches")) remote.catches = combinedCatches;
+  remote.lastUpdated = new Date();
+  if (remote.roster || remote.catches || remote.settings) setLiveStatus("live", `Live data · ${remote.lastUpdated.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"})}`);
+  else setLiveStatus("error", "Live data failed");
+  renderAll();
+  scheduleLiveRefresh(config.refreshSeconds);
+  if (showToast) toast(remote.errors.length ? `Refreshed with ${remote.errors.length} note(s).` : "Live data refreshed.");
+}
+function normalizeStaticCatch(item, index) {
+  const pokemon = pokemonById.get(Number(item?.pokemonId)) || pokemonByName.get(normalize(item?.pokemon || item?.pokemonName));
+  if (!pokemon) throw new Error(`Live data catch ${index + 1}: unknown Pokémon.`);
+  const playerName = String(item?.playerName || item?.player || item?.playerId || "").trim();
+  if (!playerName) throw new Error(`Live data catch ${index + 1}: missing player.`);
+  const team = teamForPlayer(playerName, item?.teamName || "");
+  const caughtAt = parseRemoteDate(item?.caughtAt || item?.date || item?.time) || new Date(`2026-08-01T00:00:${String(index % 60).padStart(2,"0")}Z`);
+  return {
+    id: String(item?.id || `live-${team.teamId}-${index + 1}`),
+    source: String(item?.source || "live"),
+    playerId: normalize(item?.playerId || playerName),
+    playerName,
+    teamId: String(item?.teamId || team.teamId),
+    teamName: String(item?.teamName || team.teamName),
+    pokemonId: pokemon.id,
+    line: pokemon.line,
+    caughtAt: caughtAt.toISOString(),
+    secret: boolValue(item?.secret),
+    alpha: boolValue(item?.alpha),
+    safari: boolValue(item?.safari),
+    egg: boolValue(item?.egg),
+    note: String(item?.note || "").trim()
+  };
+}
+async function loadStaticLiveState() {
+  remote = { mode: "fallback", source: "Bundled fallback", roster: null, catches: null, settings: null, errors: [], lastUpdated: null };
+  setLiveStatus("local", "Loading team data…");
+  try {
+    const response = await fetch(`${LIVE_STATE_URL}?v=${encodeURIComponent(META.siteVersion || "dev")}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    if (Number(payload.schemaVersion) !== 1) throw new Error(`unsupported schema ${payload.schemaVersion}`);
+    const catches = Array.isArray(payload.catches) ? payload.catches.map(normalizeStaticCatch) : [];
+    const mode = payload.mode === "live" ? "live" : payload.mode === "preview" ? "preview" : "demo";
+    const generated = parseRemoteDate(payload.generatedAt);
+    remote = {
+      mode,
+      source: String(payload.source || (mode === "live" ? "Generated team data" : mode === "preview" ? "No catches imported yet" : "Bundled demonstration data")),
+      roster: null,
+      catches,
+      settings: payload.settings && typeof payload.settings === "object" ? deepMergeSettings(payload.settings) : null,
+      errors: [],
+      lastUpdated: generated || new Date()
+    };
+    const statusLabel = mode === "live" ? "Live team data" : mode === "preview" ? "No catches loaded" : "Demo data";
+    setLiveStatus(mode === "live" ? "live" : "local", `${statusLabel} · ${remote.lastUpdated.toLocaleString([], {dateStyle:"medium", timeStyle:"short"})}`);
+  } catch (error) {
+    remote.errors = [`Static data: ${error.message}`];
+    setLiveStatus("error", "Bundled fallback data");
+    console.error("WARtool live-state load failed", error);
+  }
+}
+
+function scheduleLiveRefresh(seconds) {
+  const value = Number(seconds || 0);
+  const cfg = packagedOrLocalConfig();
+  if (value > 0 && (cfg.team1CatchesCsvUrl || cfg.team2CatchesCsvUrl || cfg.settingsCsvUrl || cfg.rosterCsvUrl || cfg.catchesCsvUrl)) {
+    liveRefreshTimer = setInterval(() => loadLiveData(false), value * 1000);
+  }
+}
+function setLiveStatus(kind, text) {
+  const el = $("#liveStatus");
+  el.className = `source-status ${kind}`;
+  el.textContent = text;
+}
+
+function activateTab(name) {
+  $$(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === name));
+  $$(".tab-page").forEach(el => el.classList.toggle("active", el.id === `tab-${name}`));
+  location.hash = name;
+  if (name === "rankings") renderRankings();
+  if (name === "catches") renderCatches();
+  if (name === "progress") renderProgress();
+  if (name === "settings") renderSettings();
+  if (name === "quality") renderQuality();
+}
+function populateSelect(selector, values, sorter) {
+  const el = $(selector);
+  [...new Set(values.filter(Boolean))].sort(sorter).forEach(value => el.add(new Option(value, value)));
+}
+function renderTeamTabs() {
+  const teams = allTeams();
+  const selected = selectedTeamId();
+  const container = $("#teamTabs");
+  if (!container) return;
+  container.innerHTML = teams.map(team => {
+    const playerCount = currentRoster().filter(player => player.teamId === team.id && player.active !== false).length;
+    return `<button class="team-tab ${team.id === selected ? "active" : ""}" data-team-id="${escapeHtml(team.id)}">${escapeHtml(team.name)}<small>${playerCount}</small></button>`;
+  }).join("");
+  $$('[data-team-id]', container).forEach(button => button.addEventListener("click", () => {
+    state.selectedTeamId = button.dataset.teamId;
+    saveState(`${allTeams().find(team => team.id === state.selectedTeamId)?.name || "Team"} selected`);
+    renderAll();
+  }));
+}
+function refreshPlayerSelects() {
+  const players = allPlayers();
+  for (const select of [$("#rankPlayer"), $("#catchPlayer")]) {
+    const current = select.value;
+    select.innerHTML = "";
+    players.forEach(player => select.add(new Option(player.name, player.id)));
+    if ([...select.options].some(o => o.value === current)) select.value = current;
+  }
+  const filter = $("#catchFilterPlayer");
+  const currentFilter = filter.value;
+  filter.innerHTML = '<option value="">All players</option>';
+  players.forEach(player => filter.add(new Option(player.name, player.id)));
+  if ([...filter.options].some(o => o.value === currentFilter)) filter.value = currentFilter;
+}
+function initializeStaticUi() {
+  const weekMap = new Map();
+  GROUPS.forEach(g => weekMap.set(g.week, g.season));
+  [...weekMap].sort((a,b) => a[0].localeCompare(b[0], undefined, {numeric:true})).forEach(([week,season]) => $("#rankWeek").add(new Option(`${week} · ${season}`, week)));
+  populateSelect("#rankRegion", GROUPS.flatMap(g => g.regions));
+  populateSelect("#rankMethod", GROUPS.map(g => g.method));
+  $("#pokemonList").innerHTML = POKEMON.map(p => `<option value="${escapeHtml(p.name)}"></option>`).join("");
+  $("#catchDate").value = localDateInputValue();
+  GROUPS.forEach(group => {
+    group._search = normalize(`${group.locations.map(l => `${l.region} ${l.location} ${l.encounterTypes.join(" ")}`).join(" ")} ${group.method} ${group.components.map(c => `${c.pokemon} ${c.line}`).join(" ")}`);
+  });
+  refreshPlayerSelects();
+}
+function groupLocationPresentation(group) {
+  const locations = group.locations;
+  if (locations.length === 1) return { title: locations[0].location, subtitle: locations[0].region, alt: "" };
+  const sameRegion = group.regions.length === 1;
+  if (locations.length === 2 && sameRegion) {
+    return { title: `${locations[0].location} / ${locations[1].location}`, subtitle: locations[0].region, alt: "2 equivalent locations" };
+  }
+  const preview = locations.slice(1,4).map(l => `${l.location} (${l.region})`).join(" · ");
+  return { title: locations[0].location, subtitle: locations[0].region, alt: `+${locations.length - 1} alternatives${preview ? ` · ${preview}` : ""}` };
+}
+function rankingFilters(group, context) {
+  const query = normalize($("#rankSearch").value);
+  if (query && !group._search.includes(query)) return false;
+  if ($("#rankWeek").value && group.week !== $("#rankWeek").value) return false;
+  const time = $("#rankTime").value;
+  if (time === "Any time" && group.timeLabel !== "Any time") return false;
+  if (time && time !== "Any time" && !group.times.includes(time)) return false;
+  if ($("#rankRegion").value && !group.regions.includes($("#rankRegion").value)) return false;
+  if ($("#rankMethod").value && group.method !== $("#rankMethod").value) return false;
+  if (!$("#rankIncludeIncomplete").checked && group.incomplete) return false;
+  const confidence = $("#rankConfidence").value;
+  if (confidence === "high" && group.confidence !== "high") return false;
+  if (confidence === "medium" && group.confidence === "low") return false;
+  if ($("#rankOnlyMissing").checked && !group.components.some(c => !context.teamLines.has(c.line))) return false;
+  return true;
+}
+function compositionHtml(detail, max = 3) {
+  return `<div class="composition-icons">${detail.slice(0,max).map(c => `<span class="poke-chip" title="${escapeHtml(c.pokemon)} · ${formatPercent(c.share)} · Tier ${c.tier}"><img src="${sprite(c.pokemonId)}" alt=""><span>${escapeHtml(c.pokemon)} ${formatPercent(c.share,0)}</span></span>`).join("")}${detail.length > max ? `<span class="method-pill">+${detail.length-max}</span>` : ""}</div>`;
+}
+function renderRankings() {
+  const context = getCatchContext();
+  const mode = $("#rankMode").value;
+  const playerId = $("#rankPlayer").value || allPlayers()[0]?.id;
+  const limit = Number($("#rankLimit").value || 24);
+  const allMatches = GROUPS
+    .filter(group => rankingFilters(group, context))
+    .map(group => ({ group, score: scoreGroup(group, mode, playerId, context) }))
+    .filter(row => row.score.encountersPerHour > 0)
+    .sort((a,b) => b.score.pointsPerHour - a.score.pointsPerHour);
+
+  const best = allMatches[0]?.score.pointsPerHour || 0;
+  const ratio = Number($("#rankRange").value || 0);
+  const cutoff = ratio > 0 ? best * ratio : 0;
+  currentRankingRows = ratio > 0
+    ? allMatches.filter(row => row.score.pointsPerHour + 1e-12 >= cutoff)
+    : allMatches;
+  const shown = currentRankingRows.slice(0, limit);
+
+  $("#kpiMatches").textContent = currentRankingRows.length.toLocaleString();
+  $("#kpiAllMatches").textContent = `${allMatches.length.toLocaleString()} match before range`;
+  $("#kpiBest").textContent = best ? formatNumber(best,4) : "—";
+  $("#kpiCutoff").textContent = ratio > 0 && best ? `${formatNumber(cutoff,4)} · ${Math.round(ratio*100)}%` : "None";
+  const settings = getEffectiveSettings();
+  const denominator = shown[0]
+    ? shinyDenominatorForMethod(shown[0].group.method, settings)
+    : settings.baseShinyDenominator / (1 + settings.eventWildBoost);
+  $("#kpiRate").textContent = `1 / ${Math.round(denominator).toLocaleString()}`;
+
+  const bestWrap = $("#bestHunt");
+  if (shown.length) {
+    const row = shown[0];
+    const present = groupLocationPresentation(row.group);
+    bestWrap.innerHTML = `<article class="best-hunt" tabindex="0" role="button" aria-label="Open best hunt calculation">
+      <div class="best-rank">#1</div>
+      <div class="best-copy">
+        <span class="best-method">${escapeHtml(row.group.method)}</span>
+        <h2>${escapeHtml(present.title)}</h2>
+        <p>${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)} · ${escapeHtml(row.group.timeLabel)}</p>
+        ${present.alt ? `<p class="alt-count">${escapeHtml(present.alt)}</p>` : ""}
+      </div>
+      <div>${compositionHtml(row.score.detail, 6)}</div>
+      <div class="best-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>expected points / hour</span><small>${formatNumber(row.score.average,2)} average points per shiny</small></div>
+    </article>`;
+    const bestCard = bestWrap.querySelector('.best-hunt');
+    const open = () => openSpotDialog(row.group, mode, playerId);
+    bestCard.addEventListener('click', open);
+    bestCard.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+  } else {
+    bestWrap.innerHTML = "";
+  }
+
+  const grid = $("#rankRows");
+  grid.innerHTML = shown.slice(1).map((row,index) => {
+    const rank = index + 2;
+    const present = groupLocationPresentation(row.group);
+    const alt = present.alt ? `<div class="hunt-subscore alt-count">${escapeHtml(present.alt)}</div>` : "";
+    return `<article class="hunt-card" data-rank-index="${rank-1}" tabindex="0" role="button">
+      <div class="hunt-rank">#${rank}</div>
+      <div class="hunt-title">
+        <h3>${escapeHtml(present.title)}</h3>
+        <div class="hunt-meta">${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)}</div>
+        <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span></div>
+        ${compositionHtml(row.score.detail, 4)}${alt}
+      </div>
+      <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} avg pts</div></div>
+    </article>`;
+  }).join("");
+  $$('.hunt-card', grid).forEach((card,index) => {
+    const row = shown[index + 1];
+    if (!row) return;
+    const open = () => openSpotDialog(row.group, mode, playerId);
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+  });
+  $("#rankEmpty").classList.toggle("hidden", shown.length > 0);
+}
+function rawSourceFor(group, component) {
+  if (group.lure) {
+    if (component.lureExclusive) return { label: "Lure slot", raw: null, explanation: "Lure-exclusive" };
+    const baseShare = component.share / 0.95;
+    return { label: formatPercent(baseShare * group.rawTotal, 1), raw: baseShare * group.rawTotal, explanation: "Base table" };
+  }
+  const raw = component.rawRate ?? component.share * group.rawTotal;
+  return { label: formatPercent(raw, 1), raw, explanation: "Dex rate" };
+}
+function openSpotDialog(group, mode, playerId) {
+  const context = getCatchContext();
+  const score = scoreGroup(group, mode, playerId, context);
+  const player = allPlayers().find(p => p.id === playerId);
+  const modeLabel = {player:`${player?.name || "Player"} · live`,team:"Team live",fresh:"Fresh event",base:"Base tier value",duplicate:"All duplicate"}[mode];
+  const present = groupLocationPresentation(group);
+  const methodExplanation = group.method.includes("Horde")
+    ? `Sweet Scent uses only the ${formatPercent(group.rawTotal,0)} horde block. Each raw rate is divided by that block total.`
+    : group.method === "Fossil"
+      ? "Each fossil revives into one guaranteed species. The event's +10% wild-only shiny boost is not applied."
+      : group.method === "Honey Tree"
+        ? "The Dex Honey Tree pool is normalized for this time of day. Encounters/hour is an editable active-run assumption."
+        : group.lure
+          ? "The base Water/single table is scaled to 95%, then the 5% lure-exclusive slot is added."
+          : group.method.includes("Chum Bucket")
+            ? "Chum keeps the underlying fishing species table; its extra encounters are represented by the editable encounters/hour assumption."
+            : group.rawTotal < 0.999
+              ? `The numeric ${group.method.toLowerCase()} block totals ${formatPercent(group.rawTotal,1)} and is normalized within this method.`
+              : "The encounter composition already totals 100% for this method.";
+  const rows = score.detail.map(c => {
+    const raw = rawSourceFor(group, c);
+    const status = c.duplicatePlayer ? '<span class="confidence low">duplicate</span>' : c.missingTeam ? '<span class="confidence high">unique open</span>' : '<span class="confidence medium">line caught</span>';
+    return `<tr><td><img src="${sprite(c.pokemonId)}" alt="">${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td><td class="numeric">${formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
+  }).join("");
+  const notes = group.validation.map(note => `<div class="validation-note ${note.level}">${escapeHtml(note.message)}</div>`).join("");
+  const locations = group.locations.map(location => `<div class="location-option"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)}</small></div><small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div>`).join("");
+  const formula = `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points${score.catchMultiplier !== 1 ? ` × ${formatPercent(score.catchMultiplier,0)} Safari catch success` : ""}<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`;
+  $("#spotDialogContent").innerHTML = `<div class="dialog-body">
+    <div class="dialog-title"><div><h3>${escapeHtml(present.title)}</h3><p>${escapeHtml(group.week)} · ${escapeHtml(group.season)} · ${escapeHtml(group.timeLabel)} · ${escapeHtml(group.method)}</p></div></div>
+    <div class="dialog-score-grid"><div class="dialog-score"><span>Points/hour</span><strong>${formatNumber(score.pointsPerHour,4)}</strong></div><div class="dialog-score"><span>Average points/shiny</span><strong>${formatNumber(score.average,2)}</strong></div><div class="dialog-score"><span>Encounters/hour</span><strong>${formatNumber(score.encountersPerHour,0)}</strong></div></div>
+    <p class="muted">Scoring mode: <strong>${escapeHtml(modeLabel)}</strong>. Secret expected value: ${formatNumber(score.secretEV,2)}. Safari bonus expected value: ${formatNumber(score.safariEV,2)}.</p>
+    <section class="dialog-section"><h4>Equivalent locations</h4><div class="location-list">${locations}</div></section>
+    <section class="dialog-section"><h4>Encounter calculation</h4><p class="muted">${escapeHtml(methodExplanation)}</p><table class="raw-table"><thead><tr><th>Pokémon</th><th>Raw source</th><th>Final share</th><th>Score if shiny</th><th>Live status</th></tr></thead><tbody>${rows}</tbody></table></section>
+    <section class="dialog-section"><h4>Points/hour formula</h4><div class="calc-box">${formula}</div></section>
+    ${notes ? `<section class="dialog-section"><h4>Validation and assumptions</h4><div class="note-list">${notes}</div></section>` : ""}
+  </div>`;
+  $("#spotDialog").showModal();
+}
+function resetRankingFilters() {
+  ["rankSearch","rankWeek","rankTime","rankRegion","rankMethod","rankConfidence"].forEach(id => $("#"+id).value = "");
+  $("#rankMode").value = "player";
+  $("#rankRange").value = "0.8";
+  $("#rankLimit").value = "24";
+  $("#rankOnlyMissing").checked = false;
+  $("#rankIncludeIncomplete").checked = false;
+  renderRankings();
+}
+function downloadRankingCsv() {
+  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","composition"];
+  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; ")]);
+  const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
+  downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
+}
+
+function resolvePokemon(value) {
+  return pokemonByName.get(normalize(value));
+}
+function renderPlayers() {
+  refreshPlayerSelects();
+  const remoteMode = isRemoteCatchMode();
+  $("#playerChips").innerHTML = allPlayers().map(p => `<span class="player-chip">${escapeHtml(p.name)}${!remoteMode && state.players.length > 1 && state.players.some(x=>x.id===p.id) ? `<button data-remove-player="${p.id}" title="Remove">×</button>` : ""}</span>`).join("");
+  $$('[data-remove-player]').forEach(btn => btn.addEventListener("click", () => removePlayer(btn.dataset.removePlayer)));
+}
+function addPlayer(name) {
+  const clean = String(name || "").trim();
+  if (!clean) return;
+  const id = normalize(clean);
+  if (allPlayers().some(p => p.id === id)) return toast("That player already exists.");
+  state.players.push({ id, name: clean, teamId: selectedTeamId(), teamName: selectedTeamName(), teamOrder: allTeams().find(t => t.id === selectedTeamId())?.order || 99, active: true });
+  saveState("Player added");
+  renderAll();
+}
+function removePlayer(id) {
+  if (state.catches.some(c => c.playerId === id && c.teamId === selectedTeamId())) return toast("Remove that player's local catches first.");
+  state.players = state.players.filter(p => !(p.id === id && p.teamId === selectedTeamId()));
+  saveState("Player removed");
+  renderAll();
+}
+function addCatch(event) {
+  event.preventDefault();
+  if (isRemoteCatchMode()) return toast("Catches are managed in the connected Google Sheet.");
+  const pokemon = resolvePokemon($("#catchPokemon").value);
+  if (!pokemon) return toast("Choose a Pokémon from the list.");
+  const player = allPlayers().find(p => p.id === $("#catchPlayer").value);
+  const caughtAt = new Date($("#catchDate").value);
+  state.catches.push({
+    id: uid("catch"), source: "local", playerId: player.id, playerName: player.name,
+    teamId: player.teamId || selectedTeamId(), teamName: player.teamName || selectedTeamName(),
+    pokemonId: pokemon.id, line: pokemon.line,
+    caughtAt: Number.isNaN(caughtAt.valueOf()) ? new Date().toISOString() : caughtAt.toISOString(),
+    secret: $("#catchSecret").checked, alpha: $("#catchAlpha").checked,
+    safari: $("#catchSafari").checked, egg: $("#catchEgg").checked,
+    note: $("#catchNote").value.trim()
+  });
+  saveState("Shiny added");
+  event.target.reset();
+  $("#catchDate").value = localDateInputValue();
+  renderAll();
+  toast(`${pokemon.name} added.`);
+}
+function deleteCatch(id) {
+  if (isRemoteCatchMode()) return;
+  state.catches = state.catches.filter(c => c.id !== id);
+  saveState("Shiny removed");
+  renderAll();
+}
+function tierRowsHtml(itemsByTier, options = {}) {
+  const caughtBoard = options.caughtBoard === true;
+  return Array.from({ length: 8 }, (_, tier) => {
+    const items = itemsByTier.get(tier) || [];
+    const points = [50,45,40,30,15,10,5,3][tier];
+    const content = items.length
+      ? items.map(item => {
+          const classes = ["tier-mon", item.caught === false ? "missing" : "caught", item.dim ? "search-dim" : ""].filter(Boolean).join(" ");
+          const score = item.score != null ? `<span class="score-dot">${formatNumber(item.score,0)}</span>` : "";
+          const flag = item.flag ? `<span class="flag-dot">${escapeHtml(item.flag)}</span>` : "";
+          const shiny = item.shiny !== false;
+          return `<div class="${classes}" data-tooltip="${escapeHtml(item.tooltip || item.name)}">${flag}${score}<img src="${sprite(item.pokemonId, shiny)}" alt="${escapeHtml(item.name)}"><strong>${escapeHtml(item.name)}</strong>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ""}</div>`;
+        }).join("")
+      : `<span class="tier-empty">${caughtBoard ? "No catches in this tier yet." : "No matching evolution lines."}</span>`;
+    return `<section class="tier-row" data-tier="${tier}"><div class="tier-label">T${tier}<small>${points} points</small></div><div class="tier-cell">${content}</div></section>`;
+  }).join("");
+}
+
+function renderCatches() {
+  renderPlayers();
+  const remoteMode = isRemoteCatchMode();
+  $("#localCatchEditor").classList.toggle("hidden", remoteMode);
+  $("#remoteCatchNotice").classList.toggle("hidden", !remoteMode);
+  if (remoteMode) {
+    const isLive = remote.mode === "live";
+    const isPreview = remote.mode === "preview";
+    $("#remoteCatchNotice").innerHTML = isLive
+      ? `<strong>Read-only live data.</strong> The GitHub pipeline generated these catches.`
+      : isPreview
+        ? `<strong>Ready for live data.</strong> No caught shinies are bundled; the Google Sheet pipeline will populate this page.`
+        : `<strong>Read-only demonstration data.</strong> The later GitHub Action will replace this file with catches from the Google Sheet.`;
+    $("#catchPageDescription").textContent = isLive
+      ? "Public team catches arranged in the official Shiny Wars tier structure."
+      : isPreview
+        ? "Caught shinies will appear here by tier after the Google Sheet importer is connected."
+        : "Bundled demonstration catches arranged in the official Shiny Wars tier structure.";
+  } else {
+    $("#catchPageDescription").textContent = "Fallback local catches arranged in the official Shiny Wars tier structure.";
+  }
+
+  const context = getCatchContext();
+  const filter = $("#catchFilterPlayer").value;
+  const allTeamCatches = [...activeCatches()].sort((a,b) => new Date(b.caughtAt) - new Date(a.caughtAt));
+  const catches = allTeamCatches.filter(item => !filter || item.playerId === filter);
+  $("#catchCountBadge").textContent = allTeamCatches.length;
+  $("#catchSummary").innerHTML = `<article class="summary-card"><span>Team points</span><strong>${formatNumber(context.teamTotal,0)}</strong></article><article class="summary-card"><span>Catches</span><strong>${allTeamCatches.length}</strong></article><article class="summary-card"><span>Unique lines</span><strong>${context.teamLines.size}</strong></article><article class="summary-card"><span>Selected view</span><strong>${catches.length}</strong><small>${filter ? "player catches" : "all catches"}</small></article>`;
+
+  const tierMap = new Map(Array.from({length:8}, (_,tier) => [tier, []]));
+  for (const item of catches) {
+    const pokemon = pokemonById.get(Number(item.pokemonId));
+    if (!pokemon) continue;
+    const scored = context.scores.get(item.id) || { total: 0, duplicate: false };
+    const flags = [item.secret && "Secret", item.alpha && "Alpha", item.safari && "Safari", item.egg && "Egg", scored.duplicate && "Duplicate"].filter(Boolean);
+    tierMap.get(Number(pokemon.tier)).push({
+      pokemonId: pokemon.id,
+      name: pokemon.name,
+      subtitle: item.playerName || item.playerId,
+      shiny: true,
+      score: scored.total,
+      flag: item.secret ? "S" : item.alpha ? "A" : item.safari ? "Z" : item.egg ? "E" : "",
+      tooltip: `${pokemon.name}\n${item.playerName || item.playerId} · ${formatDate(item.caughtAt)}\n${formatNumber(scored.total,0)} points${flags.length ? ` · ${flags.join(" · ")}` : ""}`
+    });
+  }
+  for (const values of tierMap.values()) values.sort((a,b) => a.name.localeCompare(b.name) || a.subtitle.localeCompare(b.subtitle));
+  $("#catchTierBoard").innerHTML = tierRowsHtml(tierMap, { caughtBoard: true });
+
+  $("#catchRows").innerHTML = catches.map(item => {
+    const pokemon = pokemonById.get(Number(item.pokemonId));
+    const scored = context.scores.get(item.id) || { total:0, duplicate:false };
+    const flags = [item.secret&&"Secret",item.alpha&&"Alpha",item.safari&&"Safari",item.egg&&"Egg",scored.duplicate&&"Duplicate"].filter(Boolean);
+    return `<article class="catch-row"><img src="${sprite(pokemon.id,true)}" alt=""><div><strong>${escapeHtml(pokemon.name)}</strong><small>${escapeHtml(item.playerName || item.playerId)} · ${formatDate(item.caughtAt)} · Tier ${pokemon.tier}</small><div class="catch-meta">${flags.map(flag => `<span class="flag">${escapeHtml(flag)}</span>`).join("")}${item.note ? `<span class="flag">${escapeHtml(item.note)}</span>` : ""}</div></div><div><div class="score-badge">${formatNumber(scored.total,0)} pts</div>${remoteMode ? "" : `<button class="icon-button" data-delete-catch="${item.id}" title="Delete">×</button>`}</div></article>`;
+  }).join("");
+  $("#catchEmpty").classList.toggle("hidden", catches.length > 0);
+  $$('[data-delete-catch]').forEach(button => button.addEventListener("click", () => deleteCatch(button.dataset.deleteCatch)));
+}
+function renderProgress() {
+  const context = getCatchContext();
+  const query = normalize($("#progressSearch").value);
+  const status = $("#progressStatus").value;
+  const selectedTier = $("#progressTier").value;
+  const catchesByLine = new Map();
+  for (const item of activeCatches()) {
+    const pokemon = pokemonById.get(Number(item.pokemonId));
+    if (!pokemon || catchesByLine.has(pokemon.line)) continue;
+    catchesByLine.set(pokemon.line, item);
+  }
+
+  $("#progressKpis").innerHTML = `<article class="summary-card"><span>Evolution lines caught</span><strong>${context.teamLines.size}</strong></article><article class="summary-card"><span>Lines remaining</span><strong>${Math.max(0,lineInfo.length-context.teamLines.size)}</strong></article><article class="summary-card"><span>Team catches</span><strong>${activeCatches().length}</strong></article><article class="summary-card"><span>Team points</span><strong>${formatNumber(context.teamTotal,0)}</strong></article>`;
+
+  const tierMap = new Map(Array.from({length:8}, (_,tier) => [tier, []]));
+  for (const info of lineInfo) {
+    const caught = context.teamLines.has(info.line);
+    if (status === "caught" && !caught) continue;
+    if (status === "missing" && caught) continue;
+    if (selectedTier !== "" && Number(selectedTier) !== Number(info.tier)) continue;
+    const queryMatch = !query || normalize(`${info.line} ${info.pokemon.map(p => p.name).join(" ")}`).includes(query);
+    if (!queryMatch) continue;
+    const catchItem = catchesByLine.get(info.line);
+    const caughtPokemon = catchItem ? pokemonById.get(Number(catchItem.pokemonId)) : null;
+    tierMap.get(Number(info.tier)).push({
+      pokemonId: caughtPokemon?.id || info.spriteId,
+      name: info.line,
+      subtitle: caught ? (catchItem?.playerName || "Caught") : "Missing",
+      shiny: caught,
+      caught,
+      flag: caught ? "✓" : "",
+      tooltip: caught
+        ? `${info.line}\nCaught by ${catchItem?.playerName || "team"}\nTier ${info.tier} · ${info.points} base points`
+        : `${info.line}\nMissing evolution line\nTier ${info.tier} · ${info.points} base points`
+    });
+  }
+  for (const values of tierMap.values()) values.sort((a,b) => a.name.localeCompare(b.name));
+  $("#progressGrid").innerHTML = tierRowsHtml(tierMap);
+}
+
+const SCORING_FIELDS = [
+  ["baseShinyDenominator","Base shiny denominator","30000"],
+  ["eventWildBoost","Wild event boost","0.10"],
+  ["uniqueBonus","Unique-line bonus","8"],
+  ["secretBonus","Secret Shiny bonus","20"],
+  ["secretChance","Secret chance given shiny","0.0625"],
+  ["safariBonus","Safari catch bonus","10"],
+  ["safariCatchChance","Safari catch success","1.0"]
+];
+function renderSettings() {
+  const effective = getEffectiveSettings();
+  const remoteOverride = Boolean(remote.settings);
+  $("#clearCatches").classList.toggle("hidden", Array.isArray(remote.catches));
+  $("#remoteSettingsNotice").classList.toggle("hidden", !remoteOverride);
+  if (remoteOverride) $("#remoteSettingsNotice").innerHTML = `<strong>Generated settings active.</strong> Values below are read-only because the deployed team-data file overrides local assumptions.`;
+  $("#scoringSettings").innerHTML = SCORING_FIELDS.map(([key,label,step]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><input class="settings-input" data-setting="${key}" type="number" step="${step.includes('.') ? '0.0001' : '1'}" value="${effective[key]}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
+  $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(method)}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}><small>individual encounters/hour</small></div>`).join("");
+  $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); }));
+  $$('[data-method]').forEach(input => input.addEventListener("change", () => { state.settings.methodSpeeds[input.dataset.method] = Number(input.value); saveState(); renderRankings(); }));
+  const cfg = packagedOrLocalConfig();
+  $("#sheetTeam1Url").value = state.liveConfig.team1CatchesCsvUrl || PACKAGED_LIVE_CONFIG.team1CatchesCsvUrl || "";
+  $("#sheetTeam2Url").value = state.liveConfig.team2CatchesCsvUrl || PACKAGED_LIVE_CONFIG.team2CatchesCsvUrl || "";
+  $("#sheetSettingsUrl").value = state.liveConfig.settingsCsvUrl || PACKAGED_LIVE_CONFIG.settingsCsvUrl || "";
+  $("#sheetRefreshSeconds").value = String(cfg.refreshSeconds || 0);
+  const connectionStatus = $("#sheetConnectionStatus");
+  const configured = Boolean(cfg.team1CatchesCsvUrl || cfg.team2CatchesCsvUrl || cfg.settingsCsvUrl);
+  connectionStatus.classList.toggle("hidden", !configured);
+  if (configured) {
+    if (remote.errors.length) {
+      connectionStatus.innerHTML = `<strong>Sheet connection problem.</strong><br>${remote.errors.map(error => escapeHtml(error)).join("<br>")}`;
+    } else if (remote.lastUpdated && (remote.catches || remote.settings)) {
+      connectionStatus.innerHTML = `<strong>Connected.</strong> Last update: ${escapeHtml(remote.lastUpdated.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}))}.`;
+    } else {
+      connectionStatus.innerHTML = `<strong>Static preview.</strong> The Google Sheet pipeline is intentionally disabled in this design patch.`;
+    }
+  }
+}
+function resetSettings() {
+  if (!confirm("Reset every local scoring and encounter-speed value?")) return;
+  state.settings = structuredClone(DEFAULT_SETTINGS);
+  saveState("Settings reset");
+  renderAll();
+}
+function saveSheetConfig() {
+  state.liveConfig = {
+    team1CatchesCsvUrl: $("#sheetTeam1Url").value.trim(),
+    team2CatchesCsvUrl: $("#sheetTeam2Url").value.trim(),
+    settingsCsvUrl: $("#sheetSettingsUrl").value.trim(),
+    refreshSeconds: Number($("#sheetRefreshSeconds").value || 0)
+  };
+  saveState("Sheet connection saved");
+  loadLiveData(true);
+}
+function clearSheetConfig() {
+  state.liveConfig = { team1CatchesCsvUrl:"", team2CatchesCsvUrl:"", settingsCsvUrl:"", refreshSeconds:0 };
+  remote = { roster:null, catches:null, settings:null, errors:[], lastUpdated:null };
+  saveState("Local mode enabled");
+  loadLiveData(true);
+}
+function exportState() {
+  const payload = { ...state, exportedAt: new Date().toISOString(), siteVersion: META.siteVersion };
+  downloadBlob(`wartool-backup-${new Date().toISOString().slice(0,10)}.json`, new Blob([JSON.stringify(payload,null,2)], {type:"application/json"}));
+}
+function clearCatches() {
+  if (!state.catches.length) return;
+  if (!confirm("Delete every local preview catch?")) return;
+  state.catches = [];
+  saveState("Local catches cleared");
+  renderAll();
+}
+function downloadBlob(name, blob) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function renderQuality() {
+  const s = VALIDATION.summary || {};
+  $("#qualityKpis").innerHTML = `<article class="kpi"><span>Raw ranking rows</span><strong>${Number(s.rawVariants||0).toLocaleString()}</strong></article><article class="kpi"><span>Clean display groups</span><strong>${Number(s.displayGroups||0).toLocaleString()}</strong><small>${Number(s.mergedGroups||0).toLocaleString()} include alternative locations</small></article><article class="kpi"><span>Any-time groups</span><strong>${Number(s.anyTimeGroups||0).toLocaleString()}</strong></article><article class="kpi"><span>Fatal validation errors</span><strong>${Number(s.fatalChecks||0).toLocaleString()}</strong><small>${Number(s.warnings||0).toLocaleString()} warnings · ${Number(s.assumptions||0).toLocaleString()} assumptions</small></article>`;
+  $("#buildInfo").innerHTML = `<dt>WARtool version</dt><dd>${escapeHtml(META.siteVersion || "unknown")}</dd><dt>Generated</dt><dd>${escapeHtml(META.generatedAt || "unknown")}</dd><dt>Pokémon in dump</dt><dd>${Number(META.monsters_in_dump||0).toLocaleString()}</dd><dt>Time/location rows</dt><dd>${Number(s.locationTimeCollapsed||0).toLocaleString()}</dd><dt>Display groups</dt><dd>${Number(s.displayGroups||0).toLocaleString()}</dd><dt>Team-data source</dt><dd>${escapeHtml(remote.source || (remote.mode === "live" ? "Generated live data" : "Bundled preview"))}</dd>`;
+  const level = $("#qualityLevel").value;
+  const issueRows = [];
+  for (const issue of VALIDATION.issues || []) {
+    for (const note of issue.notes || []) {
+      if (level && note.level !== level) continue;
+      issueRows.push({ ...note, issue });
+    }
+  }
+  $("#qualityIssues").innerHTML = issueRows.slice(0,250).map(row => `<div class="issue-row"><span class="confidence ${row.level === 'fatal' ? 'low' : row.level === 'warning' ? 'medium' : 'high'}">${escapeHtml(row.level)}</span><strong>${escapeHtml(row.issue.method)}</strong><div><strong>${escapeHtml(row.issue.locations.slice(0,2).join(" / "))}${row.issue.locations.length>2 ? ` +${row.issue.locations.length-2}` : ""}</strong><p>${escapeHtml(row.message)}</p></div></div>`).join("") || '<div class="empty">No notes at this level.</div>';
+}
+function renderAll() {
+  renderTeamTabs();
+  refreshPlayerSelects();
+  renderRankings();
+  renderCatches();
+  renderProgress();
+  renderSettings();
+  renderQuality();
+}
+function toast(message) {
+  const el = $("#toast");
+  el.textContent = message;
+  el.classList.remove("hidden");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => el.classList.add("hidden"), 2600);
+}
+function bindEvents() {
+  $$(".tab").forEach(tab => tab.addEventListener("click", () => activateTab(tab.dataset.tab)));
+  $$(`[data-tab-jump]`).forEach(button => button.addEventListener("click", () => activateTab(button.dataset.tabJump)));
+  $("#themeToggle")?.addEventListener("click", toggleTheme);
+  ["rankSearch","rankWeek","rankTime","rankRegion","rankMethod","rankMode","rankPlayer","rankConfidence","rankRange","rankLimit","rankOnlyMissing","rankIncludeIncomplete"].forEach(id => $("#"+id).addEventListener(id === "rankSearch" ? "input" : "change", renderRankings));
+  $("#rankResetFilters").addEventListener("click", resetRankingFilters);
+  $("#rankDownload").addEventListener("click", downloadRankingCsv);
+  $("#catchForm").addEventListener("submit", addCatch);
+  $("#playerForm").addEventListener("submit", event => { event.preventDefault(); addPlayer($("#playerName").value); event.target.reset(); });
+  $("#catchFilterPlayer").addEventListener("change", renderCatches);
+  $("#progressSearch").addEventListener("input", renderProgress);
+  $("#progressStatus").addEventListener("change", renderProgress);
+  $("#progressTier").addEventListener("change", renderProgress);
+  $("#resetSettings").addEventListener("click", resetSettings);
+  $("#saveSheetConfig").addEventListener("click", saveSheetConfig);
+  $("#clearSheetConfig").addEventListener("click", clearSheetConfig);
+  $("#exportState").addEventListener("click", exportState);
+  $("#quickExport")?.addEventListener("click", exportState);
+  $("#quickRefresh")?.addEventListener("click", () => toast("Bundled team data is already loaded."));
+  $("#refreshCatches").addEventListener("click", () => { renderAll(); toast("Team view refreshed."); });
+  $("#clearCatches").addEventListener("click", clearCatches);
+  $("#qualityLevel").addEventListener("change", renderQuality);
+  $("#importState").addEventListener("change", async event => {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      const rosterById = new Map(PACKAGED_ROSTER.map(p => [p.id, p]));
+      state = {
+        version: 7,
+        settings: deepMergeSettings(parsed.settings),
+        players: (() => {
+          const map = new Map(PACKAGED_ROSTER.map(player => [player.id, { ...player }]));
+          for (const player of Array.isArray(parsed.players) ? parsed.players : []) map.set(player.id || normalize(player.name), { ...map.get(player.id || normalize(player.name)), ...player });
+          return [...map.values()];
+        })(),
+        selectedTeamId: parsed.selectedTeamId || DEFAULT_STATE.selectedTeamId,
+        catches: (Array.isArray(parsed.catches) ? parsed.catches : []).map(item => ({ ...item, teamId: item.teamId || rosterById.get(item.playerId)?.teamId || DEFAULT_STATE.selectedTeamId, teamName: item.teamName || rosterById.get(item.playerId)?.teamName || PACKAGED_ROSTER[0]?.teamName || "Team" })),
+        liveConfig: structuredClone(DEFAULT_STATE.liveConfig)
+      };
+      saveState("Backup imported");
+      await loadLiveData(false);
+      toast("Backup imported.");
+    } catch (error) { toast(`Import failed: ${error.message}`); }
+    event.target.value = "";
+  });
+}
+async function start() {
+  if (!GROUPS.length || !POKEMON.length) {
+    $("#fatal").classList.remove("hidden");
+    $("#fatal").innerHTML = `WARtool could not load its data files.<code>Run START_WARTOOL.bat instead of opening index.html directly.</code>`;
+    return;
+  }
+  initializeStaticUi();
+  bindEvents();
+  const requested = location.hash.replace("#", "");
+  if (["rankings","catches","progress","settings","quality"].includes(requested)) activateTab(requested);
+  else activateTab("rankings");
+  setTheme(currentTheme());
+  renderAll();
+  await loadStaticLiveState();
+  renderAll();
+}
+
+start().catch(error => {
+  console.error(error);
+  $("#fatal").classList.remove("hidden");
+  $("#fatal").textContent = `WARtool failed to start: ${error.message}`;
+});

@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#2d6a4f">
+  <meta name="color-scheme" content="light dark">
+  <meta name="description" content="WARtool ranks PokeMMO Shiny Wars hunts and visualizes team progress.">
+  <title>WARtool · PokeMMO Shiny Wars</title>
+  <script>
+    try {
+      const saved = localStorage.getItem("wartool.theme") || "light";
+      const theme = saved === "system"
+        ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : saved;
+      document.documentElement.dataset.theme = theme;
+    } catch {}
+  </script>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="site.webmanifest">
+  <link rel="stylesheet" href="css/styles.css?v=0.7.1">
+</head>
+<body>
+  <a class="skip-link" href="#app">Skip to content</a>
+  <div class="sky-pixels" aria-hidden="true"></div>
+  <div id="fatal" class="fatal hidden"></div>
+
+  <header class="topbar">
+    <button class="brand" type="button" data-tab-jump="rankings" aria-label="WARtool rankings">
+      <span class="pixel-ball" aria-hidden="true"><i></i></span>
+      <span class="brand-copy"><strong>WAR</strong><em>TOOL</em></span>
+    </button>
+
+    <div class="header-actions">
+      <nav class="main-nav" aria-label="Main navigation">
+        <button class="tab active" data-tab="rankings">Rankings</button>
+        <button class="tab" data-tab="catches">Caught Shinies <span id="catchCountBadge" class="nav-badge">0</span></button>
+        <button class="tab" data-tab="progress">Tier Progress</button>
+        <button class="tab" data-tab="settings">Settings</button>
+        <button class="tab" data-tab="quality">Data</button>
+      </nav>
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Switch color theme" title="Switch color theme">☾</button>
+    </div>
+  </header>
+
+  <div class="team-strip">
+    <div class="team-strip-inner">
+      <span class="team-strip-label">Competition team</span>
+      <div id="teamTabs" class="team-tabs" aria-label="Competition team"></div>
+      <div class="source-cluster">
+        <span id="liveStatus" class="source-status local">Loading team data…</span>
+        <span id="saveStatus" class="save-status">Saved locally</span>
+      </div>
+    </div>
+  </div>
+
+  <main id="app" tabindex="-1">
+    <section id="tab-rankings" class="tab-page active">
+      <header class="page-hero rankings-hero">
+        <div class="hero-copy">
+          <span class="eyebrow">SHINY WARS 2026</span>
+          <h1>Find a hunt worth your time.</h1>
+          <p>Compare every viable location by expected points per hour. Equivalent times and identical encounter pools are already merged into practical choices.</p>
+          <div class="quick-links">
+            <button id="rankResetFilters" class="pixel-btn ghost" type="button">Reset filters</button>
+            <button id="rankDownload" class="pixel-btn secondary" type="button">Download results</button>
+          </div>
+        </div>
+        <aside class="hero-console" aria-label="Current ranking summary">
+          <div class="console-screen summary-screen">
+            <div class="summary-grid">
+              <div><span>Best</span><strong id="kpiBest">—</strong><small>points / hour</small></div>
+              <div><span>Options</span><strong id="kpiMatches">—</strong><small id="kpiAllMatches">strong hunts</small></div>
+              <div><span>Cutoff</span><strong id="kpiCutoff">—</strong><small>selected range</small></div>
+              <div><span>Shiny rate</span><strong id="kpiRate">—</strong><small>effective</small></div>
+            </div>
+          </div>
+          <div class="console-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+        </aside>
+      </header>
+
+      <section class="panel filter-panel">
+        <div class="panel-heading">
+          <div><span class="panel-kicker">FILTERS</span><h2>Shape the recommendation</h2></div>
+          <div class="filter-toggles">
+            <label class="check-card"><input id="rankOnlyMissing" type="checkbox"><span>Missing lines only</span></label>
+            <label class="check-card"><input id="rankIncludeIncomplete" type="checkbox"><span>Include incomplete tables</span></label>
+          </div>
+        </div>
+        <div class="filters">
+          <label class="field field-wide"><span>Search location or Pokémon</span><input id="rankSearch" placeholder="Route 229, Ariados, Safari…"></label>
+          <label class="field"><span>War period</span><select id="rankWeek"><option value="">All weeks</option></select></label>
+          <label class="field"><span>Available time</span><select id="rankTime"><option value="">All times</option><option value="Morning">Morning</option><option value="Day">Day</option><option value="Night">Night</option><option value="Any time">Any time only</option></select></label>
+          <label class="field"><span>Region</span><select id="rankRegion"><option value="">All regions</option></select></label>
+          <label class="field"><span>Method</span><select id="rankMethod"><option value="">All methods</option></select></label>
+          <label class="field"><span>Scoring</span><select id="rankMode"><option value="player">Selected player · live</option><option value="team">Team live</option><option value="fresh">Fresh event</option><option value="base">Base tier value</option><option value="duplicate">All duplicate</option></select></label>
+          <label class="field"><span>Player</span><select id="rankPlayer"></select></label>
+          <label class="field"><span>Confidence</span><select id="rankConfidence"><option value="">All</option><option value="high">High only</option><option value="medium">Medium or better</option><option value="low">Include low</option></select></label>
+          <label class="field"><span>Efficiency range</span><select id="rankRange"><option value="0.9">Within 90% of best</option><option value="0.8" selected>Within 80% of best</option><option value="0.7">Within 70% of best</option><option value="0.6">Within 60% of best</option><option value="0">Show all</option></select></label>
+          <label class="field"><span>Show</span><select id="rankLimit"><option>12</option><option selected>24</option><option>48</option><option>100</option></select></label>
+        </div>
+      </section>
+
+      <section id="bestHunt" class="best-hunt-wrap" aria-live="polite"></section>
+      <section>
+        <div class="section-head">
+          <div><span class="panel-kicker">STRONG ALTERNATIVES</span><h2>Choose the hunt you actually enjoy</h2></div>
+          <p>Sorted by expected Shiny Wars points per hour.</p>
+        </div>
+        <div id="rankRows" class="hunt-grid"></div>
+        <div id="rankEmpty" class="empty-state hidden">No hunting options match these filters.</div>
+      </section>
+    </section>
+
+    <section id="tab-catches" class="tab-page">
+      <header class="page-intro">
+        <div><span class="eyebrow">TEAM SHINY BOARD</span><h1 class="page-title">Caught shinies, arranged by value.</h1><p id="catchPageDescription">Bundled team data using the same format as the future live pipeline.</p></div>
+        <button id="refreshCatches" class="pixel-btn ghost" type="button">Refresh view</button>
+      </header>
+      <div id="remoteCatchNotice" class="notice hidden"></div>
+
+      <section class="summary-ribbon">
+        <div id="catchSummary" class="summary-cards"></div>
+        <label class="field compact player-filter"><span>Show player</span><select id="catchFilterPlayer"><option value="">All players</option></select></label>
+      </section>
+
+      <section class="panel tier-panel">
+        <div class="panel-heading">
+          <div><span class="panel-kicker">CAUGHT OVERVIEW</span><h2>Shiny tier board</h2><p>Every catch sits in the tier of its evolution line. Hover a sprite for the player and score.</p></div>
+        </div>
+        <div id="catchTierBoard" class="tier-board"></div>
+        <div id="catchEmpty" class="empty-state hidden">No catches recorded yet.</div>
+      </section>
+
+      <section class="panel recent-panel">
+        <div class="panel-heading"><div><span class="panel-kicker">RECENT ACTIVITY</span><h2>Catch details</h2></div></div>
+        <div id="catchRows" class="catch-list"></div>
+      </section>
+
+      <details id="localCatchEditor" class="panel preview-editor">
+        <summary>Local preview tools</summary>
+        <div class="preview-editor-grid">
+          <section>
+            <h3>Add a test shiny</h3>
+            <form id="catchForm" class="form-stack">
+              <label class="field"><span>Player</span><select id="catchPlayer" required></select></label>
+              <label class="field"><span>Pokémon</span><input id="catchPokemon" list="pokemonList" autocomplete="off" placeholder="Start typing…" required><datalist id="pokemonList"></datalist></label>
+              <label class="field"><span>Caught at</span><input id="catchDate" type="datetime-local" required></label>
+              <div class="flag-grid">
+                <label class="check-card"><input id="catchSecret" type="checkbox"><span>Secret</span></label>
+                <label class="check-card"><input id="catchAlpha" type="checkbox"><span>Alpha</span></label>
+                <label class="check-card"><input id="catchSafari" type="checkbox"><span>Safari</span></label>
+                <label class="check-card"><input id="catchEgg" type="checkbox"><span>Egg</span></label>
+              </div>
+              <label class="field"><span>Note</span><input id="catchNote" maxlength="120" placeholder="Route, clip, context…"></label>
+              <button class="pixel-btn" type="submit">Add shiny</button>
+            </form>
+          </section>
+          <section>
+            <h3>Preview players</h3>
+            <form id="playerForm" class="inline-form"><input id="playerName" placeholder="New player name" maxlength="32"><button class="pixel-btn small" type="submit">Add</button></form>
+            <div id="playerChips" class="chip-list"></div>
+          </section>
+        </div>
+      </details>
+    </section>
+
+    <section id="tab-progress" class="tab-page">
+      <header class="page-intro">
+        <div><span class="eyebrow">UNIQUE LINE PROGRESS</span><h1 class="page-title">See the whole tier list at once.</h1><p>Caught evolution lines shine. Missing lines stay visible, so the team can immediately see what remains.</p></div>
+      </header>
+      <section id="progressKpis" class="summary-cards progress-summary"></section>
+      <section class="panel tier-panel">
+        <div class="filters compact-filters">
+          <label class="field field-wide"><span>Search evolution line</span><input id="progressSearch" placeholder="Bulbasaur, Eevee…"></label>
+          <label class="field"><span>Status</span><select id="progressStatus"><option value="">All</option><option value="missing">Missing</option><option value="caught">Caught</option></select></label>
+          <label class="field"><span>Tier</span><select id="progressTier"><option value="">All tiers</option><option value="0">Tier 0</option><option value="1">Tier 1</option><option value="2">Tier 2</option><option value="3">Tier 3</option><option value="4">Tier 4</option><option value="5">Tier 5</option><option value="6">Tier 6</option><option value="7">Tier 7</option></select></label>
+        </div>
+        <div id="progressGrid" class="tier-board progress-board"></div>
+      </section>
+    </section>
+
+    <section id="tab-settings" class="tab-page">
+      <header class="page-intro">
+        <div><span class="eyebrow">CALCULATION INPUTS</span><h1 class="page-title">Change assumptions, not code.</h1><p>These values are stored locally in your browser. Team catches come from a same-origin data file prepared for GitHub Pages.</p></div>
+        <button id="resetSettings" class="pixel-btn danger" type="button">Reset defaults</button>
+      </header>
+      <div id="remoteSettingsNotice" class="notice hidden"></div>
+      <div class="settings-columns">
+        <section class="setting-card"><h2>Scoring & shiny rate</h2><div id="scoringSettings" class="settings-grid"></div></section>
+        <section class="setting-card"><h2>Encounters per hour</h2><div id="methodSettings" class="settings-grid"></div></section>
+      </div>
+      <section class="setting-card pipeline-card">
+        <span class="panel-kicker">DATA CONTRACT READY</span>
+        <h2>Google Sheet → GitHub Action → <code>data/live/state.json</code></h2>
+        <p>This version already reads its team data from the same-origin JSON file that the later importer will generate. The bundled file starts empty. The Google Sheet importer will generate and replace it after GitHub publication.</p>
+      </section>
+      <section class="setting-card">
+        <h2>Backup & preview</h2>
+        <p>These controls only affect local preview state.</p>
+        <div class="quick-links"><button id="exportState" class="pixel-btn" type="button">Export backup</button><label class="pixel-btn ghost file-button">Import backup<input id="importState" type="file" accept="application/json,.json"></label><button id="clearCatches" class="pixel-btn danger" type="button">Clear preview catches</button></div>
+      </section>
+
+      <div class="hidden" aria-hidden="true">
+        <input id="sheetTeam1Url"><input id="sheetTeam2Url"><input id="sheetSettingsUrl">
+        <select id="sheetRefreshSeconds"><option value="0">0</option></select>
+        <button id="saveSheetConfig"></button><button id="clearSheetConfig"></button>
+        <div id="sheetConnectionStatus"></div>
+      </div>
+    </section>
+
+    <section id="tab-quality" class="tab-page">
+      <header class="page-intro"><div><span class="eyebrow">DATA AUDIT</span><h1 class="page-title">Know what the ranking trusts.</h1><p>Validation results and modeling assumptions remain visible without dominating the main experience.</p></div></header>
+      <section id="qualityKpis" class="summary-cards"></section>
+      <div class="settings-columns">
+        <section class="setting-card">
+          <h2>Confidence guide</h2>
+          <div class="quality-list">
+            <article><span class="confidence high">High</span><div><strong>Sweet Scent hordes</strong><p>Normal 5% horde blocks and exact 100% early-route Sweet Scent tables are both normalized correctly.</p></div></article>
+            <article><span class="confidence medium">Medium</span><div><strong>Lure, Safari, Chum & Fossil</strong><p>Encounter pools are known; practical speed or capture assumptions remain editable.</p></div></article>
+            <article><span class="confidence low">Low</span><div><strong>Incomplete tables</strong><p>Hidden by default and clearly marked when included.</p></div></article>
+          </div>
+        </section>
+        <section class="setting-card"><h2>Build information</h2><dl id="buildInfo" class="definition-list"></dl></section>
+      </div>
+      <section class="setting-card">
+        <div class="panel-heading"><div><h2>Validation notes</h2></div><label class="field compact"><span>Level</span><select id="qualityLevel"><option value="">All notes</option><option value="fatal">Fatal</option><option value="warning">Warnings</option><option value="assumption">Assumptions</option></select></label></div>
+        <div id="qualityIssues" class="issue-list"></div>
+      </section>
+    </section>
+  </main>
+
+  <footer class="site-footer"><span>WARtool v0.7.1 · GitHub release candidate</span><span>Encounter data from the PokeMMO client dump</span></footer>
+
+  <dialog id="spotDialog" class="spot-dialog">
+    <form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form>
+    <div id="spotDialogContent"></div>
+  </dialog>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="data/meta.js?v=0.7.1"></script>
+  <script src="data/pokemon.js?v=0.7.1"></script>
+  <script src="data/groups.js?v=0.7.1"></script>
+  <script src="data/live-config.js?v=0.7.1"></script>
+  <script src="data/roster.js?v=0.7.1"></script>
+  <script src="data/preview.js?v=0.7.1"></script>
+  <script src="js/app.js?v=0.7.1"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+WARtool validation PASSED
+
+- Pokémon: 601 species across 282 evolution lines
+- Ranking groups: 15,569 across 16 methods
+- Incomplete groups hidden by default: 163
+- Sprites: 1,202 normal/shiny files verified
+- Roster: 60 players across 2 separate teams
+- Packaged team data: 0 catches scoring 0 points
+- GitHub Pages paths, no-cache local server, and JSON live-data contract verified
+
+Method groups:
+- 5x Horde: 1,724 groups @ 1,200 encounters/hour
+- 5x Horde (Slowed): 1,724 groups @ 1,000 encounters/hour
+- 3x Horde: 610 groups @ 720 encounters/hour
+- 3x Horde (Slowed): 610 groups @ 600 encounters/hour
+- Lure Singles: 3,224 groups @ 280 encounters/hour
+- Singles: 3,163 groups @ 220 encounters/hour
+- Safari Singles: 392 groups @ 300 encounters/hour
+- Lure Safari Singles: 75 groups @ 300 encounters/hour
+- Fishing: 860 groups @ 270 encounters/hour
+- Fishing + Lure: 919 groups @ 340 encounters/hour
+- Fishing + Chum Bucket: 860 groups @ 400 encounters/hour
+- Fishing + Lure + Chum Bucket: 919 groups @ 500 encounters/hour
+- Rock Smash: 184 groups @ 120 encounters/hour
+- Headbutt: 257 groups @ 120 encounters/hour
+- Honey Tree: 12 groups @ 60 encounters/hour
+- Fossil: 36 groups @ 120 encounters/hour
