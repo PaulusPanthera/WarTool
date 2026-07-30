@@ -1,9 +1,7 @@
-WARtool v0.8.1 UI cleanup patch
+WARtool v0.8.2 automatic-refresh patch
 
-1. Open this ZIP.
-2. Copy everything inside directly into your connected WarTool repository folder.
-3. Choose Replace files when Windows asks.
-4. In GitHub Desktop, commit: "Expand rankings and clean UI v0.8.1"
-5. Push origin.
+Copy everything inside this ZIP into your existing connected WarTool repository folder.
+Replace matching files, then commit and push with GitHub Desktop.
 
-This patch keeps the Google Sheet pipeline and encounter data unchanged.
+Suggested commit:
+Fix automatic live refresh v0.8.2

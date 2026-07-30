@@ -8,6 +8,7 @@ const PACKAGED_LIVE_CONFIG = window.WAR_LIVE_CONFIG || {};
 const PACKAGED_ROSTER = window.WAR_ROSTER || [];
 const PACKAGED_PREVIEW_CATCHES = window.WAR_PREVIEW_CATCHES || [];
 const LIVE_STATE_URL = "data/live/state.json";
+const STATIC_STATE_REFRESH_MS = 60_000;
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -64,6 +65,8 @@ let state = loadState();
 let remote = { mode: "fallback", source: "Bundled fallback", roster: null, catches: null, settings: null, errors: [], lastUpdated: null };
 let currentRankingRows = [];
 let liveRefreshTimer = null;
+let staticStateRefreshTimer = null;
+let lastLiveStateFingerprint = "";
 let saveTimer = null;
 let rankingObserver = null;
 let rankingRenderToken = 0;
@@ -718,14 +721,21 @@ function normalizeStaticCatch(item, index) {
     note: String(item?.note || "").trim()
   };
 }
-async function loadStaticLiveState() {
-  remote = { mode: "fallback", source: "Bundled fallback", roster: null, catches: null, settings: null, errors: [], lastUpdated: null };
-  setLiveStatus("local", "Loading team data…");
+async function loadStaticLiveState({ silent = false } = {}) {
+  if (!silent) {
+    remote = { mode: "fallback", source: "Bundled fallback", roster: null, catches: null, settings: null, errors: [], lastUpdated: null };
+    setLiveStatus("local", "Loading team data…");
+  }
   try {
-    const response = await fetch(`${LIVE_STATE_URL}?v=${encodeURIComponent(META.siteVersion || "dev")}`, { cache: "no-store" });
+    const response = await fetch(`${LIVE_STATE_URL}?refresh=${Date.now()}`, {
+      cache: "no-store",
+      headers: { "Cache-Control": "no-cache" }
+    });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const payload = await response.json();
     if (Number(payload.schemaVersion) !== 1) throw new Error(`unsupported schema ${payload.schemaVersion}`);
+    const fingerprint = JSON.stringify([payload.generatedAt || "", payload.catches || [], payload.settings || {}]);
+    const changed = fingerprint !== lastLiveStateFingerprint;
     const catches = Array.isArray(payload.catches) ? payload.catches.map(normalizeStaticCatch) : [];
     const mode = payload.mode === "live" ? "live" : payload.mode === "preview" ? "preview" : "demo";
     const generated = parseRemoteDate(payload.generatedAt);
@@ -738,13 +748,36 @@ async function loadStaticLiveState() {
       errors: [],
       lastUpdated: generated || new Date()
     };
+    lastLiveStateFingerprint = fingerprint;
     const statusLabel = mode === "live" ? "Live team data" : mode === "preview" ? "No catches loaded" : "Demo data";
     setLiveStatus(mode === "live" ? "live" : "local", `${statusLabel} · ${remote.lastUpdated.toLocaleString([], {dateStyle:"medium", timeStyle:"short"})}`);
+    return changed;
   } catch (error) {
-    remote.errors = [`Static data: ${error.message}`];
-    setLiveStatus("error", "Bundled fallback data");
-    console.error("WARtool live-state load failed", error);
+    if (!silent) {
+      remote.errors = [`Static data: ${error.message}`];
+      setLiveStatus("error", "Bundled fallback data");
+      console.error("WARtool live-state load failed", error);
+    } else {
+      console.warn("WARtool background refresh failed", error);
+    }
+    return false;
   }
+}
+
+async function refreshStaticLiveState({ notify = false } = {}) {
+  const changed = await loadStaticLiveState({ silent: true });
+  if (changed) renderAll();
+  if (notify) toast(changed ? "Team data updated." : "Team data is already current.");
+}
+
+function scheduleStaticLiveStateRefresh() {
+  clearInterval(staticStateRefreshTimer);
+  staticStateRefreshTimer = setInterval(() => {
+    if (!document.hidden) refreshStaticLiveState();
+  }, STATIC_STATE_REFRESH_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refreshStaticLiveState();
+  });
 }
 
 function scheduleLiveRefresh(seconds) {
@@ -1330,12 +1363,8 @@ function bindEvents() {
   $("#clearSheetConfig").addEventListener("click", clearSheetConfig);
   $("#exportState").addEventListener("click", exportState);
   $("#quickExport")?.addEventListener("click", exportState);
-  $("#quickRefresh")?.addEventListener("click", () => toast("Bundled team data is already loaded."));
-  $("#refreshCatches").addEventListener("click", async () => {
-    await loadStaticLiveState();
-    renderAll();
-    toast("Latest deployed team data loaded.");
-  });
+  $("#quickRefresh")?.addEventListener("click", () => refreshStaticLiveState({ notify: true }));
+  $("#refreshCatches").addEventListener("click", () => refreshStaticLiveState({ notify: true }));
   $("#clearCatches").addEventListener("click", clearCatches);
   $("#qualityLevel").addEventListener("change", renderQuality);
   $("#importState").addEventListener("change", async event => {
@@ -1378,6 +1407,7 @@ async function start() {
   renderAll();
   await loadStaticLiveState();
   renderAll();
+  scheduleStaticLiveStateRefresh();
 }
 
 start().catch(error => {

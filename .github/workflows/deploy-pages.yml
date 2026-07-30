@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
   schedule:
     # Every five minutes, offset from minute 0 to reduce scheduler congestion.
-    - cron: "2-57/5 * * * *"
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
 
 permissions:
   contents: read
@@ -15,11 +15,13 @@ permissions:
 
 concurrency:
   group: pages
-  cancel-in-progress: true
+  # Do not cancel a deployment just because the next five-minute run started.
+  cancel-in-progress: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -36,7 +38,6 @@ jobs:
 
       - name: Import live Google Sheet data
         env:
-          # Optional repository variables override the committed public URLs.
           TEAM_SURPRISE_CSV_URL: ${{ vars.TEAM_SURPRISE_CSV_URL }}
           TEAM_MORE_LIKE_IT_CSV_URL: ${{ vars.TEAM_MORE_LIKE_IT_CSV_URL }}
           WAR_SETTINGS_CSV_URL: ${{ vars.WAR_SETTINGS_CSV_URL }}
@@ -64,6 +65,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: build
     steps:
       - name: Deploy to GitHub Pages
