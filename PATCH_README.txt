@@ -1,16 +1,9 @@
-WARtool v0.8.0 LIVE PIPELINE PATCH
+WARtool v0.8.1 UI cleanup patch
 
-Copy everything in this patch directly into your existing GitHub Desktop
-repository folder and allow Windows to replace matching files.
+1. Open this ZIP.
+2. Copy everything inside directly into your connected WarTool repository folder.
+3. Choose Replace files when Windows asks.
+4. In GitHub Desktop, commit: "Expand rankings and clean UI v0.8.1"
+5. Push origin.
 
-Do not create a new project folder. Do not delete the existing .git folder.
-
-After copying:
-1. Open GitHub Desktop.
-2. Commit with: Add live Google Sheet pipeline v0.8.0
-3. Push origin.
-4. Open GitHub -> Actions -> Import live data and deploy WARtool.
-5. The first run verifies the three real Google CSV links and deploys the site.
-
-The committed state stays empty. GitHub Actions generates the live state only
-inside the deployment workspace, so automatic updates do not create commits.
+This patch keeps the Google Sheet pipeline and encounter data unchanged.

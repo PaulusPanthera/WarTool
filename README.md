@@ -1,4 +1,4 @@
-# WARtool v0.8.0
+# WARtool v0.8.1
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.

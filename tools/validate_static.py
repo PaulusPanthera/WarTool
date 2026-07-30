@@ -162,6 +162,11 @@ def main() -> int:
         fail(errors, "Root-absolute HTML asset path found; GitHub project Pages requires relative paths.")
 
     app_text = (ROOT / "js/app.js").read_text(encoding="utf-8")
+    for option in ('value="250"', 'value="500"', 'value="1000"', 'value="all"'):
+        if option not in index_text:
+            fail(errors, f"Expanded ranking limit option missing: {option}")
+    if "appendRankingChunk" not in app_text or "IntersectionObserver" not in app_text:
+        fail(errors, "Unlimited ranking mode is not using progressive rendering.")
     if "data/live/state.json" not in app_text or "loadStaticLiveState" not in app_text:
         fail(errors, "App is not wired to the same-origin live-state JSON contract.")
     if re.search(r"navigator\.serviceWorker\s*\.\s*register|serviceWorker\.register", app_text):
@@ -188,8 +193,8 @@ def main() -> int:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.0":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.0'.")
+    if meta.get("siteVersion") != "0.8.1":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.1'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 

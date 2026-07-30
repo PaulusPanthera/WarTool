@@ -607,3 +607,50 @@ html[data-theme="dark"] .location-option,
 html[data-theme="dark"] .issue-row { background: #202f28; }
 html[data-theme="dark"] .field input::placeholder,
 html[data-theme="dark"] .inline-form input::placeholder { color: #aebdb3; opacity: 1; }
+
+/* v0.8.1 compact interface */
+.team-strip-inner { min-height: 52px; }
+.rankings-hero { min-height: 330px; margin-bottom: 24px; }
+.rankings-hero .hero-copy { padding: 18px 0; }
+.rankings-hero h1 { max-width: 720px; margin-bottom: 0; }
+.rankings-hero .hero-console { padding: 14px; }
+.rankings-hero .console-screen { min-height: 240px; }
+.rankings-hero .summary-grid div { min-height: 104px; padding: 13px; }
+.page-intro { margin-bottom: 20px; }
+.page-intro p:empty { display: none; }
+.panel { margin-bottom: 24px; }
+.filter-panel .panel-heading { align-items: center; }
+.filter-panel-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.filter-panel-actions .filter-toggles { margin-right: 3px; }
+.panel-heading h2, .section-head h2, .setting-card h2 { margin-top: 0; }
+.section-head { margin: 5px 0 14px; }
+.best-hunt-wrap { margin-bottom: 26px; }
+.hunt-card { content-visibility: auto; contain-intrinsic-size: 190px; }
+.rank-load-status {
+  margin: 22px auto 0; width: fit-content; padding: 8px 12px;
+  color: var(--muted); border: 2px dashed var(--line); background: var(--paper);
+  font-size: .72rem; font-weight: 900;
+}
+.compact-pipeline {
+  display: flex; align-items: center; justify-content: space-between; gap: 18px;
+  padding: 16px 20px;
+}
+.compact-pipeline h2 { margin: 7px 0 0; }
+.compact-pipeline a { font-weight: 900; color: var(--green); white-space: nowrap; }
+.site-footer { margin-top: -8px; }
+
+@media (max-width: 840px) {
+  .rankings-hero { min-height: auto; }
+  .rankings-hero .console-screen { min-height: 215px; }
+  .filter-panel-actions { justify-content: flex-start; }
+}
+@media (max-width: 560px) {
+  .filter-panel-actions { width: 100%; }
+  .filter-panel-actions .filter-toggles { margin-right: 0; }
+  .filter-panel-actions .pixel-btn { flex: 1; }
+  .compact-pipeline { align-items: flex-start; flex-direction: column; }
+}
+.filter-panel .filters { grid-template-columns: repeat(6,minmax(130px,1fr)); }
+@media (max-width: 1120px) { .filter-panel .filters { grid-template-columns: repeat(3,minmax(145px,1fr)); } }
+@media (max-width: 840px) { .filter-panel .filters { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 560px) { .filter-panel .filters { grid-template-columns: 1fr; } }

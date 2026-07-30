@@ -65,6 +65,8 @@ let remote = { mode: "fallback", source: "Bundled fallback", roster: null, catch
 let currentRankingRows = [];
 let liveRefreshTimer = null;
 let saveTimer = null;
+let rankingObserver = null;
+let rankingRenderToken = 0;
 
 function normalize(value) {
   return String(value || "").trim().toLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9♀♂]+/g, "");
@@ -115,6 +117,10 @@ function setTheme(theme) {
 }
 function toggleTheme() {
   setTheme(currentTheme() === "dark" ? "light" : "dark");
+}
+function previewToolsEnabled() {
+  return ["localhost", "127.0.0.1"].includes(location.hostname)
+    && new URLSearchParams(location.search).get("preview") === "1";
 }
 function buildLineInfo() {
   const map = new Map();
@@ -839,11 +845,72 @@ function rankingFilters(group, context) {
 function compositionHtml(detail, max = 3) {
   return `<div class="composition-icons">${detail.slice(0,max).map(c => `<span class="poke-chip" title="${escapeHtml(c.pokemon)} · ${formatPercent(c.share)} · Tier ${c.tier}"><img src="${sprite(c.pokemonId)}" alt=""><span>${escapeHtml(c.pokemon)} ${formatPercent(c.share,0)}</span></span>`).join("")}${detail.length > max ? `<span class="method-pill">+${detail.length-max}</span>` : ""}</div>`;
 }
+function rankingCardHtml(row, index) {
+  const rank = index + 1;
+  const present = groupLocationPresentation(row.group);
+  const alt = present.alt ? `<div class="hunt-subscore alt-count">${escapeHtml(present.alt)}</div>` : "";
+  return `<article class="hunt-card" data-rank-index="${index}" tabindex="0" role="button">
+    <div class="hunt-rank">#${rank}</div>
+    <div class="hunt-title">
+      <h3>${escapeHtml(present.title)}</h3>
+      <div class="hunt-meta">${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)}</div>
+      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span></div>
+      ${compositionHtml(row.score.detail, 4)}${alt}
+    </div>
+    <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} avg pts</div></div>
+  </article>`;
+}
+function bindRankingCards(grid, mode, playerId) {
+  $$('.hunt-card:not([data-bound])', grid).forEach(card => {
+    const row = currentRankingRows[Number(card.dataset.rankIndex)];
+    if (!row) return;
+    card.dataset.bound = "true";
+    const open = () => openSpotDialog(row.group, mode, playerId);
+    card.addEventListener('click', open);
+    card.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        open();
+      }
+    });
+  });
+}
+function stopRankingAutoload() {
+  rankingRenderToken += 1;
+  rankingObserver?.disconnect();
+  rankingObserver = null;
+}
+function appendRankingChunk(mode, playerId, token) {
+  if (token !== rankingRenderToken) return;
+  const grid = $("#rankRows");
+  const status = $("#rankLoadStatus");
+  const start = Number(grid.dataset.rendered || 1);
+  const end = Math.min(start + 250, currentRankingRows.length);
+  if (end <= start) {
+    status.classList.add("hidden");
+    rankingObserver?.disconnect();
+    rankingObserver = null;
+    return;
+  }
+  grid.insertAdjacentHTML("beforeend", currentRankingRows.slice(start, end).map((row, offset) => rankingCardHtml(row, start + offset)).join(""));
+  grid.dataset.rendered = String(end);
+  bindRankingCards(grid, mode, playerId);
+  if (end >= currentRankingRows.length) {
+    status.classList.add("hidden");
+    rankingObserver?.disconnect();
+    rankingObserver = null;
+  } else {
+    status.textContent = `${end.toLocaleString()} / ${currentRankingRows.length.toLocaleString()} loaded`;
+  }
+}
 function renderRankings() {
+  stopRankingAutoload();
   const context = getCatchContext();
   const mode = $("#rankMode").value;
   const playerId = $("#rankPlayer").value || allPlayers()[0]?.id;
-  const limit = Number($("#rankLimit").value || 24);
+  const limitValue = $("#rankLimit").value || "100";
+  const allMode = limitValue === "all";
+  const numericLimit = Math.max(1, Number(limitValue) || 100);
   const allMatches = GROUPS
     .filter(group => rankingFilters(group, context))
     .map(group => ({ group, score: scoreGroup(group, mode, playerId, context) }))
@@ -856,15 +923,18 @@ function renderRankings() {
   currentRankingRows = ratio > 0
     ? allMatches.filter(row => row.score.pointsPerHour + 1e-12 >= cutoff)
     : allMatches;
-  const shown = currentRankingRows.slice(0, limit);
+  const initialCount = allMode
+    ? Math.min(250, currentRankingRows.length)
+    : Math.min(numericLimit, currentRankingRows.length);
+  const shown = currentRankingRows.slice(0, initialCount);
 
   $("#kpiMatches").textContent = currentRankingRows.length.toLocaleString();
-  $("#kpiAllMatches").textContent = `${allMatches.length.toLocaleString()} match before range`;
+  $("#kpiAllMatches").textContent = `${allMatches.length.toLocaleString()} before range`;
   $("#kpiBest").textContent = best ? formatNumber(best,4) : "—";
   $("#kpiCutoff").textContent = ratio > 0 && best ? `${formatNumber(cutoff,4)} · ${Math.round(ratio*100)}%` : "None";
   const settings = getEffectiveSettings();
-  const denominator = shown[0]
-    ? shinyDenominatorForMethod(shown[0].group.method, settings)
+  const denominator = currentRankingRows[0]
+    ? shinyDenominatorForMethod(currentRankingRows[0].group.method, settings)
     : settings.baseShinyDenominator / (1 + settings.eventWildBoost);
   $("#kpiRate").textContent = `1 / ${Math.round(denominator).toLocaleString()}`;
 
@@ -881,7 +951,7 @@ function renderRankings() {
         ${present.alt ? `<p class="alt-count">${escapeHtml(present.alt)}</p>` : ""}
       </div>
       <div>${compositionHtml(row.score.detail, 6)}</div>
-      <div class="best-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>expected points / hour</span><small>${formatNumber(row.score.average,2)} average points per shiny</small></div>
+      <div class="best-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><small>${formatNumber(row.score.average,2)} avg points / shiny</small></div>
     </article>`;
     const bestCard = bestWrap.querySelector('.best-hunt');
     const open = () => openSpotDialog(row.group, mode, playerId);
@@ -892,30 +962,25 @@ function renderRankings() {
   }
 
   const grid = $("#rankRows");
-  grid.innerHTML = shown.slice(1).map((row,index) => {
-    const rank = index + 2;
-    const present = groupLocationPresentation(row.group);
-    const alt = present.alt ? `<div class="hunt-subscore alt-count">${escapeHtml(present.alt)}</div>` : "";
-    return `<article class="hunt-card" data-rank-index="${rank-1}" tabindex="0" role="button">
-      <div class="hunt-rank">#${rank}</div>
-      <div class="hunt-title">
-        <h3>${escapeHtml(present.title)}</h3>
-        <div class="hunt-meta">${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)}</div>
-        <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span></div>
-        ${compositionHtml(row.score.detail, 4)}${alt}
-      </div>
-      <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} avg pts</div></div>
-    </article>`;
-  }).join("");
-  $$('.hunt-card', grid).forEach((card,index) => {
-    const row = shown[index + 1];
-    if (!row) return;
-    const open = () => openSpotDialog(row.group, mode, playerId);
-    card.addEventListener('click', open);
-    card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
-  });
-  $("#rankEmpty").classList.toggle("hidden", shown.length > 0);
+  grid.innerHTML = shown.slice(1).map((row, offset) => rankingCardHtml(row, offset + 1)).join("");
+  grid.dataset.rendered = String(initialCount);
+  bindRankingCards(grid, mode, playerId);
+
+  const status = $("#rankLoadStatus");
+  if (allMode && initialCount < currentRankingRows.length) {
+    const token = rankingRenderToken;
+    status.textContent = `${initialCount.toLocaleString()} / ${currentRankingRows.length.toLocaleString()} loaded`;
+    status.classList.remove("hidden");
+    rankingObserver = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) appendRankingChunk(mode, playerId, token);
+    }, { rootMargin: "1200px 0px" });
+    rankingObserver.observe(status);
+  } else {
+    status.classList.add("hidden");
+  }
+  $("#rankEmpty").classList.toggle("hidden", currentRankingRows.length > 0);
 }
+
 function rawSourceFor(group, component) {
   if (group.lure) {
     if (component.lureExclusive) return { label: "Lure slot", raw: null, explanation: "Lure-exclusive" };
@@ -967,7 +1032,7 @@ function resetRankingFilters() {
   ["rankSearch","rankWeek","rankTime","rankRegion","rankMethod","rankConfidence"].forEach(id => $("#"+id).value = "");
   $("#rankMode").value = "player";
   $("#rankRange").value = "0.8";
-  $("#rankLimit").value = "24";
+  $("#rankLimit").value = "100";
   $("#rankOnlyMissing").checked = false;
   $("#rankIncludeIncomplete").checked = false;
   renderRankings();
@@ -1044,7 +1109,7 @@ function tierRowsHtml(itemsByTier, options = {}) {
           const shiny = item.shiny !== false;
           return `<div class="${classes}" data-tooltip="${escapeHtml(item.tooltip || item.name)}">${flag}${score}<img src="${sprite(item.pokemonId, shiny)}" alt="${escapeHtml(item.name)}"><strong>${escapeHtml(item.name)}</strong>${item.subtitle ? `<small>${escapeHtml(item.subtitle)}</small>` : ""}</div>`;
         }).join("")
-      : `<span class="tier-empty">${caughtBoard ? "No catches in this tier yet." : "No matching evolution lines."}</span>`;
+      : `<span class="tier-empty">${caughtBoard ? "—" : "No matching evolution lines."}</span>`;
     return `<section class="tier-row" data-tier="${tier}"><div class="tier-label">T${tier}<small>${points} points</small></div><div class="tier-cell">${content}</div></section>`;
   }).join("");
 }
@@ -1052,31 +1117,23 @@ function tierRowsHtml(itemsByTier, options = {}) {
 function renderCatches() {
   renderPlayers();
   const remoteMode = isRemoteCatchMode();
-  $("#localCatchEditor").classList.toggle("hidden", remoteMode);
-  $("#remoteCatchNotice").classList.toggle("hidden", !remoteMode);
-  if (remoteMode) {
-    const isLive = remote.mode === "live";
-    const isPreview = remote.mode === "preview";
-    $("#remoteCatchNotice").innerHTML = isLive
-      ? `<strong>Read-only live data.</strong> The GitHub pipeline generated these catches.`
-      : isPreview
-        ? `<strong>Ready for live data.</strong> No caught shinies are bundled; the Google Sheet pipeline will populate this page.`
-        : `<strong>Read-only demonstration data.</strong> The later GitHub Action will replace this file with catches from the Google Sheet.`;
-    $("#catchPageDescription").textContent = isLive
-      ? "Public team catches arranged in the official Shiny Wars tier structure."
-      : isPreview
-        ? "Caught shinies will appear here by tier after the Google Sheet importer is connected."
-        : "Bundled demonstration catches arranged in the official Shiny Wars tier structure.";
-  } else {
-    $("#catchPageDescription").textContent = "Fallback local catches arranged in the official Shiny Wars tier structure.";
+  const previewMode = previewToolsEnabled() && !remoteMode;
+  $("#localCatchEditor").classList.toggle("hidden", !previewMode);
+  const showNotice = remoteMode && remote.mode !== "live";
+  $("#remoteCatchNotice").classList.toggle("hidden", !showNotice);
+  if (showNotice) {
+    $("#remoteCatchNotice").textContent = remote.mode === "preview"
+      ? "Waiting for the first Sheet import."
+      : "Preview data is active.";
   }
+  $("#catchPageDescription").textContent = "";
 
   const context = getCatchContext();
   const filter = $("#catchFilterPlayer").value;
   const allTeamCatches = [...activeCatches()].sort((a,b) => new Date(b.caughtAt) - new Date(a.caughtAt));
   const catches = allTeamCatches.filter(item => !filter || item.playerId === filter);
   $("#catchCountBadge").textContent = allTeamCatches.length;
-  $("#catchSummary").innerHTML = `<article class="summary-card"><span>Team points</span><strong>${formatNumber(context.teamTotal,0)}</strong></article><article class="summary-card"><span>Catches</span><strong>${allTeamCatches.length}</strong></article><article class="summary-card"><span>Unique lines</span><strong>${context.teamLines.size}</strong></article><article class="summary-card"><span>Selected view</span><strong>${catches.length}</strong><small>${filter ? "player catches" : "all catches"}</small></article>`;
+  $("#catchSummary").innerHTML = `<article class="summary-card"><span>Team points</span><strong>${formatNumber(context.teamTotal,0)}</strong></article><article class="summary-card"><span>Catches</span><strong>${allTeamCatches.length}</strong></article><article class="summary-card"><span>Unique lines</span><strong>${context.teamLines.size}</strong></article>`;
 
   const tierMap = new Map(Array.from({length:8}, (_,tier) => [tier, []]));
   for (const item of catches) {
@@ -1095,7 +1152,9 @@ function renderCatches() {
     });
   }
   for (const values of tierMap.values()) values.sort((a,b) => a.name.localeCompare(b.name) || a.subtitle.localeCompare(b.subtitle));
-  $("#catchTierBoard").innerHTML = tierRowsHtml(tierMap, { caughtBoard: true });
+  $("#catchTierBoard").classList.toggle("hidden", catches.length === 0);
+  $("#catchTierBoard").innerHTML = catches.length ? tierRowsHtml(tierMap, { caughtBoard: true }) : "";
+  $("#recentCatchPanel").classList.toggle("hidden", catches.length === 0);
 
   $("#catchRows").innerHTML = catches.map(item => {
     const pokemon = pokemonById.get(Number(item.pokemonId));
@@ -1158,11 +1217,12 @@ const SCORING_FIELDS = [
 function renderSettings() {
   const effective = getEffectiveSettings();
   const remoteOverride = Boolean(remote.settings);
+  const previewMode = previewToolsEnabled() && !remoteOverride;
   $("#clearCatches").classList.toggle("hidden", Array.isArray(remote.catches));
-  $("#remoteSettingsNotice").classList.toggle("hidden", !remoteOverride);
-  if (remoteOverride) $("#remoteSettingsNotice").innerHTML = `<strong>Generated settings active.</strong> Values below are read-only because the deployed team-data file overrides local assumptions.`;
+  $("#remoteSettingsNotice").classList.add("hidden");
+  $("#backupPreviewCard").classList.toggle("hidden", !previewMode);
   $("#scoringSettings").innerHTML = SCORING_FIELDS.map(([key,label,step]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><input class="settings-input" data-setting="${key}" type="number" step="${step.includes('.') ? '0.0001' : '1'}" value="${effective[key]}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
-  $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(method)}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}><small>individual encounters/hour</small></div>`).join("");
+  $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(method)}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
   $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); }));
   $$('[data-method]').forEach(input => input.addEventListener("change", () => { state.settings.methodSpeeds[input.dataset.method] = Number(input.value); saveState(); renderRankings(); }));
   const cfg = packagedOrLocalConfig();
