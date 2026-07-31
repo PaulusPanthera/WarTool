@@ -33,6 +33,14 @@ EXPECTED_METHOD_SPEEDS = {
     "Fossil": 120,
 }
 TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
+VALID_HAZARD_SEVERITIES = {"critical", "warning"}
+VALID_HAZARD_SOURCES = {"move", "ability"}
+EXPECTED_HAZARD_SUMMARY = {
+    "hazardGroups": 6983,
+    "criticalHazardGroups": 2425,
+    "hazardLocations": 9118,
+    "hazardSpecies": 192,
+}
 
 EXPECTED_METHOD_COUNTS = {
     "5x Horde": 1724,
@@ -176,6 +184,10 @@ def main() -> int:
         fail(errors, "Dark-mode contrast release rules are missing.")
     if "v0.7.1 dark-mode readability hotfix" not in css_text:
         fail(errors, "Dark-mode readability hotfix rules are missing.")
+    if "v0.8.3 shiny-safety warnings" not in css_text:
+        fail(errors, "Shiny-safety warning styles are missing.")
+    if "safetyBadgeHtml" not in app_text or "shiny-safety-section" not in app_text:
+        fail(errors, "Shiny-safety warnings are not wired into ranking cards and hunt details.")
     for method, speed in EXPECTED_METHOD_SPEEDS.items():
         pattern = rf'"{re.escape(method)}"\s*:\s*{speed}(?:\D|$)'
         if not re.search(pattern, app_text):
@@ -193,8 +205,8 @@ def main() -> int:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.2":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.2'.")
+    if meta.get("siteVersion") != "0.8.3":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.3'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -225,12 +237,68 @@ def main() -> int:
         share = sum(float(component.get("share", 0)) for component in components)
         if not math.isclose(share, 1.0, rel_tol=0, abs_tol=1e-8):
             fail(errors, f"Group {index} composition sums to {share:.12f}, not 1.0")
+        component_ids = set()
         for component in components:
             pid = int(component.get("pokemonId", -1))
+            component_ids.add(pid)
             if pid not in pokemon_by_id:
                 fail(errors, f"Group {index} references unknown Pokémon id {pid}")
             if component.get("line") not in known_lines:
                 fail(errors, f"Group {index} references unknown line {component.get('line')!r}")
+
+        def hazard_core(hazard: dict[str, Any]) -> tuple[Any, ...]:
+            return (
+                int(hazard.get("pokemonId", -1)), str(hazard.get("severity", "")),
+                str(hazard.get("kind", "")), str(hazard.get("source", "")),
+                str(hazard.get("name", "")), str(hazard.get("message", "")),
+                str(hazard.get("advice", "")),
+            )
+
+        group_hazards = group.get("hazards") if isinstance(group.get("hazards"), list) else []
+        location_hazard_cores: set[tuple[Any, ...]] = set()
+        for location in locations:
+            level_min = location.get("levelMin")
+            level_max = location.get("levelMax")
+            if not isinstance(level_min, int) or not isinstance(level_max, int) or level_min < 1 or level_max < level_min:
+                fail(errors, f"Group {index} has invalid wild level range {level_min!r}–{level_max!r}.")
+            location_hazards = location.get("hazards") if isinstance(location.get("hazards"), list) else []
+            for hazard in location_hazards:
+                location_hazard_cores.add(hazard_core(hazard))
+
+        for hazard in group_hazards + [
+            item for location in locations for item in (location.get("hazards") or [])
+        ]:
+            hazard_pid = int(hazard.get("pokemonId", -1))
+            if hazard_pid not in pokemon_by_id or hazard_pid not in component_ids:
+                fail(errors, f"Group {index} hazard references Pokémon id {hazard_pid} outside its composition.")
+            if hazard.get("severity") not in VALID_HAZARD_SEVERITIES:
+                fail(errors, f"Group {index} has invalid hazard severity {hazard.get('severity')!r}.")
+            if hazard.get("source") not in VALID_HAZARD_SOURCES:
+                fail(errors, f"Group {index} has invalid hazard source {hazard.get('source')!r}.")
+            hmin, hmax = hazard.get("levelMin"), hazard.get("levelMax")
+            if not isinstance(hmin, int) or not isinstance(hmax, int) or hmin < 1 or hmax < hmin:
+                fail(errors, f"Group {index} has invalid hazard level range {hmin!r}–{hmax!r}.")
+            for field in ("name", "message", "levelLabel"):
+                if not str(hazard.get(field, "")).strip():
+                    fail(errors, f"Group {index} hazard is missing {field}.")
+
+        group_hazard_cores = {hazard_core(hazard) for hazard in group_hazards}
+        if group_hazard_cores != location_hazard_cores:
+            fail(errors, f"Group {index} merged hazards disagree with its location hazards.")
+        expected_severity = (
+            "critical" if any(hazard.get("severity") == "critical" for hazard in group_hazards)
+            else "warning" if group_hazards else ""
+        )
+        if group.get("hazardSeverity", "") != expected_severity:
+            fail(errors, f"Group {index} hazardSeverity is {group.get('hazardSeverity')!r}, expected {expected_severity!r}.")
+        for component in components:
+            component_hazards = component.get("hazards") if isinstance(component.get("hazards"), list) else []
+            component_pid = int(component.get("pokemonId", -1))
+            expected_component_cores = {
+                hazard_core(hazard) for hazard in group_hazards if int(hazard.get("pokemonId", -1)) == component_pid
+            }
+            if {hazard_core(hazard) for hazard in component_hazards} != expected_component_cores:
+                fail(errors, f"Group {index} component hazard list disagrees for Pokémon id {component_pid}.")
         if group.get("incomplete"):
             incomplete += 1
 
@@ -239,6 +307,50 @@ def main() -> int:
         fail(errors, f"Expected methods absent from groups: {', '.join(missing_methods)}")
     if methods != Counter(EXPECTED_METHOD_COUNTS):
         fail(errors, f"Encounter method counts changed unexpectedly: {dict(methods)}")
+
+    summary = validation.get("summary", {}) if isinstance(validation.get("summary"), dict) else {}
+    for field, expected in EXPECTED_HAZARD_SUMMARY.items():
+        if int(summary.get(field, -1)) != expected:
+            fail(errors, f"Hazard summary {field} is {summary.get(field)!r}, expected {expected}.")
+    calculated_hazard_groups = sum(bool(group.get("hazards")) for group in groups)
+    calculated_critical_groups = sum(group.get("hazardSeverity") == "critical" for group in groups)
+    calculated_hazard_locations = sum(
+        bool(location.get("hazards")) for group in groups for location in group.get("locations", [])
+    )
+    calculated_hazard_species = len({
+        int(hazard.get("pokemonId", -1)) for group in groups for hazard in group.get("hazards", [])
+    })
+    calculated_hazard_summary = {
+        "hazardGroups": calculated_hazard_groups,
+        "criticalHazardGroups": calculated_critical_groups,
+        "hazardLocations": calculated_hazard_locations,
+        "hazardSpecies": calculated_hazard_species,
+    }
+    if calculated_hazard_summary != EXPECTED_HAZARD_SUMMARY:
+        fail(errors, f"Calculated hazard totals changed unexpectedly: {calculated_hazard_summary}")
+
+    koffing_selfdestruct = [
+        hazard
+        for group in groups
+        for hazard in group.get("hazards", [])
+        if int(hazard.get("pokemonId", -1)) == 109 and hazard.get("name") == "Selfdestruct"
+    ]
+    if not koffing_selfdestruct or not any("Reactive Gas" in str(hazard.get("advice", "")) for hazard in koffing_selfdestruct):
+        fail(errors, "Koffing Selfdestruct warnings must disclose that Reactive Gas can suppress Damp.")
+    if any(
+        hazard.get("name") == "Perish Song"
+        for group in groups if "Horde" in str(group.get("method", ""))
+        for hazard in group.get("hazards", [])
+    ):
+        fail(errors, "Perish Song must not be warned for horde methods.")
+    if not any(
+        hazard.get("name") == "Perish Song"
+        for group in groups if "Horde" not in str(group.get("method", ""))
+        for hazard in group.get("hazards", [])
+    ):
+        fail(errors, "Expected at least one non-horde Perish Song warning.")
+    if any(group.get("hazards") for group in groups if group.get("method") == "Fossil"):
+        fail(errors, "Fossil revival groups must not carry wild-battle safety warnings.")
 
     valid_regions = {"Kanto", "Johto", "Hoenn", "Sinnoh", "Unova"}
     valid_types = {"Grass", "Cave", "Inside", "Water", "Dark Grass", "Old Rod", "Good Rod", "Super Rod", "Rocks", "Headbutt", "Sweet Scent", "Honey Tree", "Fossil revival"}
@@ -371,6 +483,7 @@ def main() -> int:
         f"Pokémon: {len(pokemon)} species across {line_count} evolution lines",
         f"Ranking groups: {len(groups):,} across {len(methods)} methods",
         f"Incomplete groups hidden by default: {incomplete}",
+        f"Shiny-safety warnings: {calculated_hazard_groups:,} groups ({calculated_critical_groups:,} critical), {calculated_hazard_species} species",
         f"Sprites: {len(pokemon) * 2:,} normal/shiny files verified",
         f"Roster: {sum(team_counts.values())} players across {len(team_counts)} separate teams",
         f"Packaged team data: {packaged_count} catches scoring {packaged_total} points",

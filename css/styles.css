@@ -486,6 +486,68 @@ html[data-theme="dark"] .confidence.medium { color: #3c2b11; }
 html[data-theme="dark"] .confidence.low { color: #4d1717; }
 html[data-theme="dark"] .site-footer { border-top-color: rgba(214,231,219,.35); }
 
+/* v0.8.3 shiny-safety warnings */
+.best-labels { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 4px; }
+.safety-pill {
+  display: inline-flex; align-items: center; gap: 4px; min-height: 25px; padding: 3px 7px;
+  border: 2px solid var(--ink); font-size: .65rem; font-weight: 900; line-height: 1;
+  text-transform: uppercase; cursor: help;
+}
+.safety-pill.critical { color: #4d1717; background: #f6b4b4; }
+.safety-pill.warning { color: #3c2b11; background: #ffe2a8; }
+.safety-pill.compact { min-width: 27px; justify-content: center; padding-inline: 5px; }
+.poke-chip { position: relative; }
+.poke-chip.has-hazard { padding-right: 24px; }
+.poke-chip.has-hazard.critical { border-color: #b74242; }
+.poke-chip.has-hazard.warning { border-color: #b67c18; }
+.poke-hazard-mark {
+  position: absolute; top: -7px; right: -7px; width: 20px; height: 20px; display: grid; place-items: center;
+  border: 2px solid var(--ink); background: #ffe2a8; color: #3c2b11; font-size: .7rem; line-height: 1;
+}
+.poke-chip.critical .poke-hazard-mark { background: #f6b4b4; color: #4d1717; }
+.table-hazard {
+  display: inline-grid; place-items: center; width: 20px; height: 20px; margin-left: 6px;
+  border: 2px solid var(--ink); background: #ffe2a8; color: #3c2b11; font-size: .68rem;
+  vertical-align: middle; cursor: help;
+}
+.table-hazard.critical { background: #f6b4b4; color: #4d1717; }
+.location-option-meta { display: flex; align-items: center; justify-content: flex-end; gap: 8px; text-align: right; }
+.location-option.has-hazard.warning { border-color: #b67c18; }
+.location-option.has-hazard.critical { border-color: #b74242; }
+.shiny-safety-section { padding: 14px; border: 3px solid var(--ink); background: #fff6d8; }
+.safety-list { display: grid; gap: 8px; }
+.safety-row {
+  display: grid; grid-template-columns: 30px 42px minmax(0,1fr); gap: 9px; align-items: center;
+  padding: 9px 10px; border: 2px solid var(--line); background: var(--cream);
+}
+.safety-row.critical { border-color: #b74242; }
+.safety-row.warning { border-color: #b67c18; }
+.safety-row .safety-icon { width: 27px; height: 27px; display: grid; place-items: center; border: 2px solid var(--ink); background: #ffe2a8; color: #3c2b11; font-weight: 900; }
+.safety-row.critical .safety-icon { background: #f6b4b4; color: #4d1717; }
+.safety-row img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
+.safety-row strong { display: block; }
+.safety-row p { margin: 2px 0; color: var(--muted); font-size: .77rem; }
+.safety-row small { display: block; color: var(--blue); font-size: .68rem; }
+
+html[data-theme="dark"] .safety-pill.critical,
+html[data-theme="dark"] .poke-chip.critical .poke-hazard-mark,
+html[data-theme="dark"] .table-hazard.critical,
+html[data-theme="dark"] .safety-row.critical .safety-icon { color: #3d1010; background: #f29a9a; }
+html[data-theme="dark"] .safety-pill.warning,
+html[data-theme="dark"] .poke-hazard-mark,
+html[data-theme="dark"] .table-hazard,
+html[data-theme="dark"] .safety-row .safety-icon { color: #33240b; background: #ffd88a; }
+html[data-theme="dark"] .poke-chip.has-hazard.critical,
+html[data-theme="dark"] .location-option.has-hazard.critical,
+html[data-theme="dark"] .safety-row.critical { border-color: #f29a9a; }
+html[data-theme="dark"] .poke-chip.has-hazard.warning,
+html[data-theme="dark"] .location-option.has-hazard.warning,
+html[data-theme="dark"] .safety-row.warning { border-color: #ffd88a; }
+html[data-theme="dark"] .shiny-safety-section { background: #26362e; border-color: #d6e7db; }
+html[data-theme="dark"] .safety-row { background: #17231d; }
+html[data-theme="dark"] .safety-row p { color: #d4e1d8; }
+html[data-theme="dark"] .safety-row small { color: #9fc6ee; }
+
 @media (max-width: 1120px) {
   .filters { grid-template-columns: repeat(3,minmax(145px,1fr)); }
   .field-wide { grid-column: span 2; }
