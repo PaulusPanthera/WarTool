@@ -1,4 +1,4 @@
-# WARtool v0.8.3
+# WARtool v0.8.4
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -24,7 +24,9 @@ JSON. It also refreshes the Pages artifact on a five-minute schedule.
 Ranking cards flag possible self-KO risks in red and lower-severity self-damage
 risks in amber. Opening a hunt shows the exact Pokémon, move or ability, wild
 level range, affected locations and counter note. Warnings are rebuilt from the
-current encounter dump together with the normal hunt data.
+current encounter dump together with the normal hunt data. Safari Singles and
+Lure Safari Singles are excluded because those encounters do not use normal
+wild-battle move or ability behavior.
 
 ## Local launch
 

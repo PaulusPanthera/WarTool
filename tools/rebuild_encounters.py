@@ -171,6 +171,11 @@ def hazard_level_label(min_level: int, max_level: int) -> str:
 
 
 def hazards_for(monster: dict[str, Any], location: dict[str, Any], method: str) -> list[dict[str, Any]]:
+    # Safari encounters do not use the normal battle/catching flow, so wild
+    # self-KO, recoil, confusion, HP-cost, and ability warnings are irrelevant.
+    if method in {"Safari Singles", "Lure Safari Singles"}:
+        return []
+
     min_level = int(location.get("min_level") or 1)
     max_level = int(location.get("max_level") or min_level)
     pokemon_id = int(monster["id"])
@@ -263,6 +268,17 @@ def merge_hazards(hazards: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def refresh_group_hazards(group: dict[str, Any]) -> None:
+    # Keep Safari methods hazard-free even when a group was cloned from a
+    # normal encounter table before this final aggregation pass.
+    if group.get("safari") or group.get("method") in {"Safari Singles", "Lure Safari Singles"}:
+        for location in group.get("locations", []):
+            location["hazards"] = []
+        group["hazards"] = []
+        group["hazardSeverity"] = ""
+        for component in group.get("components", []):
+            component["hazards"] = []
+        return
+
     location_hazards: list[dict[str, Any]] = []
     for location in group.get("locations", []):
         clean = merge_hazards(list(location.get("hazards", [])))
@@ -835,9 +851,9 @@ def main() -> int:
             "chum": "Chum keeps the fishing species table; additional encounters are represented through editable method speed.",
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
-            "safety_warnings": "Possible wild last-four level-up moves are reconstructed across each encounter level range. Self-KO, recoil, HP-cost, confusion and conditional sunlight-damage risks are flagged; Perish Song is excluded for hordes.",
+            "safety_warnings": "Possible wild last-four level-up moves are reconstructed across each encounter level range. Self-KO, recoil, HP-cost, confusion and conditional sunlight-damage risks are flagged; Perish Song is excluded for hordes and all safety warnings are excluded for Safari methods.",
         },
-        "siteVersion": "0.8.3",
+        "siteVersion": "0.8.4",
         "generatedAt": "2026-07-31",
         "encounterSource": "PokeMMO moddable resources dump uploaded 2026-07-30",
         "encounterDumpSha256": dump_hash,

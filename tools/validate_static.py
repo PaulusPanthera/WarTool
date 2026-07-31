@@ -36,10 +36,10 @@ TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
 VALID_HAZARD_SEVERITIES = {"critical", "warning"}
 VALID_HAZARD_SOURCES = {"move", "ability"}
 EXPECTED_HAZARD_SUMMARY = {
-    "hazardGroups": 6983,
-    "criticalHazardGroups": 2425,
-    "hazardLocations": 9118,
-    "hazardSpecies": 192,
+    "hazardGroups": 6748,
+    "criticalHazardGroups": 2385,
+    "hazardLocations": 8841,
+    "hazardSpecies": 190,
 }
 
 EXPECTED_METHOD_COUNTS = {
@@ -205,8 +205,8 @@ def main() -> int:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.3":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.3'.")
+    if meta.get("siteVersion") != "0.8.4":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.4'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -351,6 +351,14 @@ def main() -> int:
         fail(errors, "Expected at least one non-horde Perish Song warning.")
     if any(group.get("hazards") for group in groups if group.get("method") == "Fossil"):
         fail(errors, "Fossil revival groups must not carry wild-battle safety warnings.")
+    safari_methods = {"Safari Singles", "Lure Safari Singles"}
+    if any(
+        group.get("hazards")
+        or any(location.get("hazards") for location in group.get("locations", []))
+        or any(component.get("hazards") for component in group.get("components", []))
+        for group in groups if group.get("method") in safari_methods
+    ):
+        fail(errors, "Safari methods must not carry wild-battle safety warnings.")
 
     valid_regions = {"Kanto", "Johto", "Hoenn", "Sinnoh", "Unova"}
     valid_types = {"Grass", "Cave", "Inside", "Water", "Dark Grass", "Old Rod", "Good Rod", "Super Rod", "Rocks", "Headbutt", "Sweet Scent", "Honey Tree", "Fossil revival"}
