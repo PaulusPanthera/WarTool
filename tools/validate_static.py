@@ -193,8 +193,8 @@ def main() -> int:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.1":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.1'.")
+    if meta.get("siteVersion") != "0.8.2":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.2'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -328,7 +328,11 @@ def main() -> int:
     workflow_text = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
     if "schedule:" not in workflow_text or "tools/import_google_sheet.py" not in workflow_text:
         fail(errors, "GitHub Pages workflow is not wired to the scheduled Google Sheet importer.")
-    if "2-57/5 * * * *" not in workflow_text:
+    accepted_five_minute_schedules = (
+        "2-57/5 * * * *",
+        "2,7,12,17,22,27,32,37,42,47,52,57 * * * *",
+    )
+    if not any(schedule in workflow_text for schedule in accepted_five_minute_schedules):
         fail(errors, "Expected five-minute live-data schedule is missing from the workflow.")
 
     if live.get("schemaVersion") != 1:
