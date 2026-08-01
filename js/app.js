@@ -334,17 +334,20 @@ function scoreGroup(group, mode, playerId, context = getCatchContext()) {
   let weighted = 0;
   let missingShare = 0;
   const detail = group.components.map(c => {
-    const missingTeam = !context.teamLines.has(c.line);
-    const duplicatePlayer = selectedPlayerLines.has(c.line);
-    let score = c.points;
-    if (mode === "fresh") score = c.points + settings.uniqueBonus;
-    else if (mode === "base") score = c.points;
-    else if (mode === "team") score = c.points + (missingTeam ? settings.uniqueBonus : 0);
-    else if (mode === "player") score = (duplicatePlayer ? 1 : c.points) + (missingTeam ? settings.uniqueBonus : 0);
-    else if (mode === "duplicate") score = 1;
+    const unknown = Boolean(c.unknown || Number(c.pokemonId) <= 0);
+    const missingTeam = !unknown && !context.teamLines.has(c.line);
+    const duplicatePlayer = !unknown && selectedPlayerLines.has(c.line);
+    let score = unknown ? 0 : c.points;
+    if (!unknown) {
+      if (mode === "fresh") score = c.points + settings.uniqueBonus;
+      else if (mode === "base") score = c.points;
+      else if (mode === "team") score = c.points + (missingTeam ? settings.uniqueBonus : 0);
+      else if (mode === "player") score = (duplicatePlayer ? 1 : c.points) + (missingTeam ? settings.uniqueBonus : 0);
+      else if (mode === "duplicate") score = 1;
+    }
     weighted += c.share * score;
     if (missingTeam) missingShare += c.share;
-    return { ...c, score, missingTeam, duplicatePlayer };
+    return { ...c, score, missingTeam, duplicatePlayer, unknown };
   });
   const secretEV = eligibleSecret(group.method) ? settings.secretBonus * settings.secretChance : 0;
   const safariEV = group.safari ? settings.safariBonus : 0;
@@ -845,7 +848,7 @@ function initializeStaticUi() {
   $("#pokemonList").innerHTML = POKEMON.map(p => `<option value="${escapeHtml(p.name)}"></option>`).join("");
   $("#catchDate").value = localDateInputValue();
   GROUPS.forEach(group => {
-    group._search = normalize(`${group.locations.map(l => `${l.region} ${l.location} ${l.encounterTypes.join(" ")}`).join(" ")} ${group.method} ${group.components.map(c => `${c.pokemon} ${c.line}`).join(" ")} ${(group.hazards || []).map(h => `${h.pokemon} ${h.name} ${h.kind}`).join(" ")}`);
+    group._search = normalize(`${group.locations.map(l => `${l.region} ${l.location} ${l.encounterTypes.join(" ")}`).join(" ")} ${group.method} ${group.components.map(c => `${c.pokemon} ${c.line} ${(c.hazards || []).map(h => h.name).join(" ")} ${(c.slowAbilities || []).join(" ")}`).join(" ")}`);
   });
   refreshPlayerSelects();
 }
@@ -875,34 +878,31 @@ function rankingFilters(group, context) {
   if ($("#rankOnlyMissing").checked && !group.components.some(c => !context.teamLines.has(c.line))) return false;
   return true;
 }
-function hazardSeverity(hazards = []) {
-  return hazards.some(hazard => hazard.severity === "critical") ? "critical" : hazards.length ? "warning" : "";
+function safetySummary(group) {
+  const hazards = group.hazards || [];
+  const redirection = hazards.some(h => h.kind === "redirection");
+  const critical = hazards.some(h => h.severity === "critical" && h.kind !== "redirection");
+  const warning = hazards.some(h => h.severity !== "critical");
+  return { hazards, redirection, critical, warning, slow: (group.slowdowns || []).length > 0 };
 }
-function hazardDescription(hazard, includeLocations = false) {
-  const source = hazard.source === "ability" ? "Ability" : "Move";
-  const locations = includeLocations && hazard.locations?.length ? ` · ${hazard.locations.join(" / ")}` : "";
-  const advice = hazard.advice ? ` ${hazard.advice}` : "";
-  return `${hazard.pokemon}: ${source} ${hazard.name} (${hazard.levelLabel || "wild level"}) — ${hazard.message}${advice}${locations}`;
+function safetyBadges(group) {
+  const s = safetySummary(group);
+  return `${s.critical ? '<span class="safety-badge critical">Self-KO risk</span>' : ''}${s.redirection ? '<span class="safety-badge redirect">Redirection risk</span>' : ''}${!s.critical && !s.redirection && s.warning ? '<span class="safety-badge warning">Self-damage</span>' : ''}${s.slow ? '<span class="safety-badge slowdown"><img src="assets/encounter-slowdown.png" alt="">Start delay</span>' : ''}`;
 }
-function hazardTooltip(hazards = [], includeLocations = false) {
-  const rows = hazards.slice(0, 8).map(hazard => hazardDescription(hazard, includeLocations));
-  if (hazards.length > rows.length) rows.push(`+${hazards.length - rows.length} more warning${hazards.length - rows.length === 1 ? "" : "s"}`);
-  return rows.join("\n");
+function pokemonSafetyMarkers(component) {
+  const hazards = component.hazards || [];
+  const critical = hazards.some(h => h.severity === "critical");
+  const redirect = hazards.some(h => h.kind === "redirection");
+  const slow = component.slowAbilities || [];
+  const danger = hazards.length ? `<b class="poke-warning ${critical || redirect ? "critical" : "warning"}" title="${escapeHtml(hazards.map(h => `${h.name}: ${h.consequence}`).join(" | "))}">⚠</b>` : "";
+  const delay = slow.length ? `<b class="poke-slow" title="Start-of-battle delay: ${escapeHtml(slow.join(", "))}"><img src="assets/encounter-slowdown.png" alt=""></b>` : "";
+  return danger + delay;
 }
-function safetyBadgeHtml(hazards = [], compact = false) {
-  if (!hazards.length) return "";
-  const severity = hazardSeverity(hazards);
-  const label = severity === "critical" ? "Self-KO risk" : "Self-damage";
-  return `<span class="safety-pill ${severity}${compact ? " compact" : ""}" title="${escapeHtml(hazardTooltip(hazards, true))}" aria-label="${escapeHtml(label)}">⚠${compact ? "" : ` ${label}`}</span>`;
+function componentSprite(component) {
+  return component.unknown ? '<span class="unknown-sprite">?</span>' : `<img src="${sprite(component.pokemonId)}" alt="">`;
 }
 function compositionHtml(detail, max = 3) {
-  return `<div class="composition-icons">${detail.slice(0,max).map(c => {
-    const hazards = Array.isArray(c.hazards) ? c.hazards : [];
-    const severity = hazardSeverity(hazards);
-    const baseTitle = `${c.pokemon} · ${formatPercent(c.share)} · Tier ${c.tier}`;
-    const warningTitle = hazards.length ? `\n${hazardTooltip(hazards)}` : "";
-    return `<span class="poke-chip${severity ? ` has-hazard ${severity}` : ""}" title="${escapeHtml(baseTitle + warningTitle)}">${hazards.length ? `<span class="poke-hazard-mark" aria-hidden="true">⚠</span>` : ""}<img src="${sprite(c.pokemonId)}" alt=""><span>${escapeHtml(c.pokemon)} ${formatPercent(c.share,0)}</span></span>`;
-  }).join("")}${detail.length > max ? `<span class="method-pill">+${detail.length-max}</span>` : ""}</div>`;
+  return `<div class="composition-icons">${detail.slice(0,max).map(c => `<span class="poke-chip ${c.unknown ? "unknown" : ""}" title="${escapeHtml(c.pokemon)} · ${formatPercent(c.share)}${c.unknown ? " · points unknown" : ` · Tier ${c.tier}`} ">${pokemonSafetyMarkers(c)}${componentSprite(c)}<span>${escapeHtml(c.pokemon)} ${formatPercent(c.share,0)}</span></span>`).join("")}${detail.length > max ? `<span class="method-pill">+${detail.length-max}</span>` : ""}</div>`;
 }
 function rankingCardHtml(row, index) {
   const rank = index + 1;
@@ -913,7 +913,7 @@ function rankingCardHtml(row, index) {
     <div class="hunt-title">
       <h3>${escapeHtml(present.title)}</h3>
       <div class="hunt-meta">${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)}</div>
-      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadgeHtml(row.group.hazards || [], false)}</div>
+      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadges(row.group)}${row.group.safariPool ? `<span class="safety-badge coverage">${formatPercent(row.group.safariPool.documentedTotal,0)} documented</span>` : ""}</div>
       ${compositionHtml(row.score.detail, 4)}${alt}
     </div>
     <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} avg pts</div></div>
@@ -1004,7 +1004,7 @@ function renderRankings() {
     bestWrap.innerHTML = `<article class="best-hunt" tabindex="0" role="button" aria-label="Open best hunt calculation">
       <div class="best-rank">#1</div>
       <div class="best-copy">
-        <div class="best-labels"><span class="best-method">${escapeHtml(row.group.method)}</span>${safetyBadgeHtml(row.group.hazards || [], false)}</div>
+        <span class="best-method">${escapeHtml(row.group.method)}</span>
         <h2>${escapeHtml(present.title)}</h2>
         <p>${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)} · ${escapeHtml(row.group.timeLabel)}</p>
         ${present.alt ? `<p class="alt-count">${escapeHtml(present.alt)}</p>` : ""}
@@ -1061,8 +1061,10 @@ function openSpotDialog(group, mode, playerId) {
       ? "Each fossil revives into one guaranteed species. The event's +10% wild-only shiny boost is not applied."
       : group.method === "Honey Tree"
         ? "The Dex Honey Tree pool is normalized for this time of day. Encounters/hour is an editable active-run assumption."
+        : group.safariPool
+          ? `${group.safariPool.note} Known species keep their unconditional shares; the unknown slot contributes 0 tier/unique points, so the result is a lower bound.`
         : group.lure
-          ? "The base Water/single table is scaled to 95%, then the 5% lure-exclusive slot is added."
+          ? "The complete random encounter pool, including natural hordes, is scaled to 95%, then the 5% lure-exclusive roll is added."
           : group.method.includes("Chum Bucket")
             ? "Chum keeps the underlying fishing species table; its extra encounters are represented by the editable encounters/hour assumption."
             : group.rawTotal < 0.999
@@ -1070,27 +1072,22 @@ function openSpotDialog(group, mode, playerId) {
               : "The encounter composition already totals 100% for this method.";
   const rows = score.detail.map(c => {
     const raw = rawSourceFor(group, c);
-    const status = c.duplicatePlayer ? '<span class="confidence low">duplicate</span>' : c.missingTeam ? '<span class="confidence high">unique open</span>' : '<span class="confidence medium">line caught</span>';
-    const safety = c.hazards?.length ? `<span class="table-hazard ${hazardSeverity(c.hazards)}" title="${escapeHtml(hazardTooltip(c.hazards))}">⚠</span>` : "";
-    return `<tr><td><img src="${sprite(c.pokemonId)}" alt="">${escapeHtml(c.pokemon)}${safety}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td><td class="numeric">${formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
+    const status = c.unknown ? '<span class="confidence medium">unknown rotation</span>' : c.duplicatePlayer ? '<span class="confidence low">duplicate</span>' : c.missingTeam ? '<span class="confidence high">unique open</span>' : '<span class="confidence medium">line caught</span>';
+    return `<tr><td>${componentSprite(c)}${pokemonSafetyMarkers(c)}${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td><td class="numeric">${c.unknown ? "—" : formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
   }).join("");
   const notes = group.validation.map(note => `<div class="validation-note ${note.level}">${escapeHtml(note.message)}</div>`).join("");
-  const locations = group.locations.map(location => {
-    const hazards = Array.isArray(location.hazards) ? location.hazards : [];
-    const levelLabel = Number(location.levelMin) === Number(location.levelMax)
-      ? `Lv. ${location.levelMin}`
-      : `Lv. ${location.levelMin}–${location.levelMax}`;
-    return `<div class="location-option${hazards.length ? ` has-hazard ${hazardSeverity(hazards)}` : ""}"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)} · ${escapeHtml(levelLabel)}</small></div><div class="location-option-meta">${safetyBadgeHtml(hazards, true)}<small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div></div>`;
-  }).join("");
-  const safetyRows = (group.hazards || []).map(hazard => `<article class="safety-row ${escapeHtml(hazard.severity)}"><span class="safety-icon" aria-hidden="true">⚠</span><img src="${sprite(hazard.pokemonId)}" alt=""><div><strong>${escapeHtml(hazard.pokemon)} · ${escapeHtml(hazard.name)}</strong><p>${escapeHtml(hazard.levelLabel || "Wild level")} · ${escapeHtml(hazard.message)}${hazard.advice ? ` ${escapeHtml(hazard.advice)}` : ""}</p>${hazard.locations?.length ? `<small>${escapeHtml(hazard.locations.join(" / "))}</small>` : ""}</div></article>`).join("");
+  const hazardRows = (group.hazards || []).map(h => `<div class="safety-row ${h.severity}"><strong>${escapeHtml(h.pokemon)} · ${escapeHtml(h.name)}</strong><span>${escapeHtml(h.levelRange ? `Lv. ${h.levelRange} · ` : "")}${escapeHtml(h.consequence)}</span><small>${escapeHtml(h.counter)}</small></div>`).join("");
+  const slowdownRows = (group.slowdowns || []).map(x => `<div class="safety-row slowdown"><strong>${escapeHtml(x.pokemon)} · ${escapeHtml(x.abilities.join(" / "))}</strong><span>May add a start-of-battle animation or message.</span></div>`).join("");
+  const safetySection = hazardRows || slowdownRows ? `<section class="dialog-section"><h4>Shiny safety</h4><div class="safety-list">${hazardRows}${slowdownRows}</div></section>` : "";
+  const locations = group.locations.map(location => `<div class="location-option"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)}</small></div><small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div>`).join("");
   const formula = `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points${score.catchMultiplier !== 1 ? ` × ${formatPercent(score.catchMultiplier,0)} Safari catch success` : ""}<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`;
   $("#spotDialogContent").innerHTML = `<div class="dialog-body">
     <div class="dialog-title"><div><h3>${escapeHtml(present.title)}</h3><p>${escapeHtml(group.week)} · ${escapeHtml(group.season)} · ${escapeHtml(group.timeLabel)} · ${escapeHtml(group.method)}</p></div></div>
     <div class="dialog-score-grid"><div class="dialog-score"><span>Points/hour</span><strong>${formatNumber(score.pointsPerHour,4)}</strong></div><div class="dialog-score"><span>Average points/shiny</span><strong>${formatNumber(score.average,2)}</strong></div><div class="dialog-score"><span>Encounters/hour</span><strong>${formatNumber(score.encountersPerHour,0)}</strong></div></div>
     <p class="muted">Scoring mode: <strong>${escapeHtml(modeLabel)}</strong>. Secret expected value: ${formatNumber(score.secretEV,2)}. Safari bonus expected value: ${formatNumber(score.safariEV,2)}.</p>
     <section class="dialog-section"><h4>Equivalent locations</h4><div class="location-list">${locations}</div></section>
-    ${safetyRows ? `<section class="dialog-section shiny-safety-section"><h4>Shiny safety</h4><div class="safety-list">${safetyRows}</div></section>` : ""}
     <section class="dialog-section"><h4>Encounter calculation</h4><p class="muted">${escapeHtml(methodExplanation)}</p><table class="raw-table"><thead><tr><th>Pokémon</th><th>Raw source</th><th>Final share</th><th>Score if shiny</th><th>Live status</th></tr></thead><tbody>${rows}</tbody></table></section>
+    ${safetySection}
     <section class="dialog-section"><h4>Points/hour formula</h4><div class="calc-box">${formula}</div></section>
     ${notes ? `<section class="dialog-section"><h4>Validation and assumptions</h4><div class="note-list">${notes}</div></section>` : ""}
   </div>`;
@@ -1106,8 +1103,8 @@ function resetRankingFilters() {
   renderRankings();
 }
 function downloadRankingCsv() {
-  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","safety","safety_warnings","composition"];
-  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.group.hazardSeverity || "clear",(row.group.hazards || []).map(h=>hazardDescription(h,true)).join("; "),row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; ")]);
+  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage"];
+  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} unknown` : ""]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
   downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
 }

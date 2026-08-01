@@ -20,6 +20,8 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from enrich_encounters import (add_safety, normalize_safari_location, normalize_safari_type, transform_random_tables)
+
 ROOT = Path(__file__).resolve().parents[1]
 POKEMON_PATH = ROOT / "data" / "pokemon.js"
 GROUPS_PATH = ROOT / "data" / "groups.js"
@@ -59,45 +61,6 @@ FOSSILS = (
 ASSUMED_UNKNOWN_HORDE_SHARES = {
     (570, "Lostlorn Forest", "3x Horde"): 0.05,
 }
-
-# Shiny-safety hazards derived from the current dump's level-up learnsets.
-# A move is flagged only when it can appear among the last four level-up moves
-# at one or more levels in the actual wild encounter range.
-SELF_KO_MOVES = {
-    "Selfdestruct": "Faints after use.",
-    "Explosion": "Faints after use.",
-    "Memento": "Faints after use.",
-    "Healing Wish": "Faints after use.",
-    "Lunar Dance": "Faints after use.",
-    "Final Gambit": "Faints after use.",
-}
-RECOIL_MOVES = {
-    "Take Down": "Deals recoil damage to the user.",
-    "Double-Edge": "Deals recoil damage to the user.",
-    "Submission": "Deals recoil damage to the user.",
-    "Volt Tackle": "Deals recoil damage to the user.",
-    "Flare Blitz": "Deals recoil damage to the user.",
-    "Brave Bird": "Deals recoil damage to the user.",
-    "Wood Hammer": "Deals recoil damage to the user.",
-    "Head Smash": "Deals heavy recoil damage to the user.",
-    "Wild Charge": "Deals recoil damage to the user.",
-    "Head Charge": "Deals recoil damage to the user.",
-    "Jump Kick": "Can take crash damage if the move misses or fails.",
-    "Hi Jump Kick": "Can take heavy crash damage if the move misses or fails.",
-}
-CONFUSION_MOVES = {
-    "Thrash": "Can leave the user confused and able to damage itself.",
-    "Petal Dance": "Can leave the user confused and able to damage itself.",
-    "Outrage": "Can leave the user confused and able to damage itself.",
-}
-HP_COST_MOVES = {
-    "Belly Drum": "Costs half of the user's maximum HP.",
-}
-SUN_DAMAGE_ABILITIES = {
-    "Solar Power": "Loses HP each turn in harsh sunlight.",
-    "Dry Skin": "Loses HP each turn in harsh sunlight.",
-}
-HAZARD_SEVERITY_ORDER = {"critical": 0, "warning": 1}
 
 
 def load_assignment(path: Path, name: str) -> Any:
@@ -144,169 +107,6 @@ def parse_percent(value: Any) -> float | None:
     return None
 
 
-def possible_wild_moves(monster: dict[str, Any], min_level: int, max_level: int) -> dict[str, list[int]]:
-    """Return move -> wild levels where it can be in the last-four level-up set."""
-    level_moves = sorted([
-        (int(move.get("level", 0)), order, str(move.get("name", "")))
-        for order, move in enumerate(monster.get("moves", []))
-        if move.get("type") == "level" and move.get("name")
-    ], key=lambda item: (item[0], item[1]))
-    possible: dict[str, list[int]] = collections.defaultdict(list)
-    for level in range(max(1, min_level), max(max_level, min_level) + 1):
-        known: list[str] = []
-        for learn_level, _order, name in level_moves:
-            if learn_level > level:
-                continue
-            # Re-learning the same move makes it the newest entry without
-            # occupying two move slots.
-            known = [known_move for known_move in known if known_move != name]
-            known.append(name)
-        for name in known[-4:]:
-            possible[name].append(level)
-    return possible
-
-
-def hazard_level_label(min_level: int, max_level: int) -> str:
-    return f"Lv. {min_level}" if min_level == max_level else f"Lv. {min_level}–{max_level}"
-
-
-def hazards_for(monster: dict[str, Any], location: dict[str, Any], method: str) -> list[dict[str, Any]]:
-    # Safari encounters do not use the normal battle/catching flow, so wild
-    # self-KO, recoil, confusion, HP-cost, and ability warnings are irrelevant.
-    if method in {"Safari Singles", "Lure Safari Singles"}:
-        return []
-
-    min_level = int(location.get("min_level") or 1)
-    max_level = int(location.get("max_level") or min_level)
-    pokemon_id = int(monster["id"])
-    pokemon_name = str(monster["name"])
-    abilities = sorted({
-        str(ability.get("name"))
-        for ability in monster.get("abilities", [])
-        if ability.get("name") not in {None, "--"}
-    })
-    types = {str(value).upper() for value in monster.get("types", [])}
-    moves = possible_wild_moves(monster, min_level, max_level)
-    hazards: list[dict[str, Any]] = []
-
-    def add_move(name: str, severity: str, kind: str, message: str) -> None:
-        levels = moves.get(name)
-        if not levels:
-            return
-        level_min, level_max = min(levels), max(levels)
-        advice = ""
-        if name in {"Selfdestruct", "Explosion"}:
-            advice = "Damp or Imprison can block it."
-            if "Reactive Gas" in abilities:
-                advice = "Reactive Gas can suppress Damp; Imprison is safer."
-        elif name == "Memento":
-            advice = "Imprison is the safest counter."
-        elif name == "Final Gambit":
-            advice = "A Ghost-type is immune to Final Gambit."
-        if name in RECOIL_MOVES and "Reckless" in abilities:
-            advice = "Reckless can increase the recoil damage."
-        hazards.append({
-            "pokemonId": pokemon_id, "pokemon": pokemon_name,
-            "severity": severity, "kind": kind, "source": "move", "name": name,
-            "message": message, "advice": advice,
-            "levelMin": level_min, "levelMax": level_max,
-            "levelLabel": hazard_level_label(level_min, level_max),
-        })
-
-    for name, message in SELF_KO_MOVES.items():
-        add_move(name, "critical", "self-ko", message)
-    for name, message in RECOIL_MOVES.items():
-        add_move(name, "warning", "recoil", message)
-    for name, message in CONFUSION_MOVES.items():
-        add_move(name, "warning", "confusion", message)
-    for name, message in HP_COST_MOVES.items():
-        add_move(name, "warning", "hp-loss", message)
-    if "GHOST" in types:
-        add_move("Curse", "warning", "hp-loss", "Ghost-type Curse costs half of the user's maximum HP.")
-    # PokeMMO intentionally makes horde members immune to Perish Song. Keep
-    # the warning for non-horde encounters only.
-    if "Horde" not in method:
-        add_move("Perish Song", "critical", "delayed-ko", "Can make the user faint after the perish count expires.")
-
-    for ability_name, message in SUN_DAMAGE_ABILITIES.items():
-        if ability_name not in abilities:
-            continue
-        hazards.append({
-            "pokemonId": pokemon_id, "pokemon": pokemon_name,
-            "severity": "warning", "kind": "weather", "source": "ability",
-            "name": ability_name, "message": message,
-            "advice": "Only dangerous when harsh sunlight is active.",
-            "levelMin": min_level, "levelMax": max_level,
-            "levelLabel": hazard_level_label(min_level, max_level),
-        })
-
-    hazards.sort(key=lambda item: (
-        HAZARD_SEVERITY_ORDER.get(item["severity"], 9), item["pokemon"], item["source"], item["name"]
-    ))
-    return hazards
-
-
-def merge_hazards(hazards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: dict[tuple[Any, ...], dict[str, Any]] = {}
-    for hazard in hazards:
-        key = (
-            int(hazard["pokemonId"]), hazard["severity"], hazard["kind"],
-            hazard["source"], hazard["name"], hazard["message"], hazard.get("advice", ""),
-        )
-        if key not in merged:
-            merged[key] = copy.deepcopy(hazard)
-            merged[key]["locations"] = list(hazard.get("locations", []))
-        else:
-            item = merged[key]
-            item["levelMin"] = min(int(item["levelMin"]), int(hazard["levelMin"]))
-            item["levelMax"] = max(int(item["levelMax"]), int(hazard["levelMax"]))
-            item["levelLabel"] = hazard_level_label(item["levelMin"], item["levelMax"])
-            item["locations"] = sorted(set(item.get("locations", [])) | set(hazard.get("locations", [])))
-    return sorted(merged.values(), key=lambda item: (
-        HAZARD_SEVERITY_ORDER.get(item["severity"], 9), item["pokemon"], item["source"], item["name"]
-    ))
-
-
-def refresh_group_hazards(group: dict[str, Any]) -> None:
-    # Keep Safari methods hazard-free even when a group was cloned from a
-    # normal encounter table before this final aggregation pass.
-    if group.get("safari") or group.get("method") in {"Safari Singles", "Lure Safari Singles"}:
-        for location in group.get("locations", []):
-            location["hazards"] = []
-        group["hazards"] = []
-        group["hazardSeverity"] = ""
-        for component in group.get("components", []):
-            component["hazards"] = []
-        return
-
-    location_hazards: list[dict[str, Any]] = []
-    for location in group.get("locations", []):
-        clean = merge_hazards(list(location.get("hazards", [])))
-        location["hazards"] = clean
-        label = f"{location.get('region', '')} · {location.get('location', '')}".strip(" ·")
-        for hazard in clean:
-            item = copy.deepcopy(hazard)
-            item["locations"] = [label] if label else []
-            location_hazards.append(item)
-    group["hazards"] = merge_hazards(location_hazards)
-    group["hazardSeverity"] = (
-        "critical" if any(item["severity"] == "critical" for item in group["hazards"])
-        else "warning" if group["hazards"] else ""
-    )
-    by_species: dict[int, list[dict[str, Any]]] = collections.defaultdict(list)
-    for hazard in group["hazards"]:
-        by_species[int(hazard["pokemonId"])].append(hazard)
-    for component in group.get("components", []):
-        component["hazards"] = copy.deepcopy(by_species.get(int(component["pokemonId"]), []))
-
-
-def merge_location_details(target: dict[str, Any], source: dict[str, Any]) -> None:
-    target["encounterTypes"] = sorted(set(target.get("encounterTypes", [])) | set(source.get("encounterTypes", [])))
-    target["levelMin"] = min(int(target.get("levelMin", source.get("levelMin", 1))), int(source.get("levelMin", target.get("levelMin", 1))))
-    target["levelMax"] = max(int(target.get("levelMax", source.get("levelMax", 1))), int(source.get("levelMax", target.get("levelMax", 1))))
-    target["hazards"] = merge_hazards(list(target.get("hazards", [])) + list(source.get("hazards", [])))
-
-
 def is_safari(location: dict[str, Any]) -> bool:
     text = f"{location.get('location_name_full', '')} {location.get('location_name', '')}".lower()
     # The Johto Safari Zone Gate is an ordinary map, not a Safari encounter area.
@@ -339,7 +139,9 @@ def component_key(components: list[dict[str, Any]]) -> tuple[Any, ...]:
         (
             int(item["pokemonId"]), round(float(item["share"]), 12),
             int(item["tier"]), int(item["points"]), item["line"],
-            bool(item.get("lureExclusive")),
+            bool(item.get("lureExclusive")), bool(item.get("unknown")),
+            tuple((h.get("name"), h.get("kind"), h.get("severity"), h.get("levelRange")) for h in item.get("hazards", [])),
+            tuple(item.get("slowAbilities", [])),
         )
         for item in components
     )
@@ -351,7 +153,6 @@ def build_raw_groups(
     numeric: dict[tuple[Any, ...], list[tuple[float, dict[str, Any], dict[str, Any], str]]] = collections.defaultdict(list)
     assumed_unknown: dict[tuple[Any, ...], list[tuple[float, dict[str, Any], dict[str, Any], str]]] = collections.defaultdict(list)
     lure: dict[tuple[Any, ...], list[tuple[dict[str, Any], dict[str, Any]]]] = collections.defaultdict(list)
-    monster_by_id = {int(monster["id"]): monster for monster in monsters}
 
     for monster in monsters:
         pokemon_id = int(monster["id"])
@@ -362,6 +163,11 @@ def build_raw_groups(
             location = dict(original)
             location["region_name"] = canonical_region(location.get("region_name"))
             location["type"] = canonical_type(location.get("type"))
+            safari_here = is_safari(location)
+            location["location_name_full"] = normalize_safari_location(
+                location["region_name"], int(location.get("location_id", 0)), str(location.get("location_name_full", ""))
+            )
+            location["type"] = normalize_safari_type(location["region_name"], location["type"], safari_here)
             method = classify_method(location)
             if method is None:
                 continue
@@ -385,6 +191,8 @@ def build_raw_groups(
                         "line": pokemon["line"],
                         "lureExclusive": False,
                         "rawRate": 0.0,
+                        "minLevel": int(location.get("min_level", 0) or 0),
+                        "maxLevel": int(location.get("max_level", 0) or 0),
                     }
                     probability = parse_percent(value)
                     if probability is not None:
@@ -418,6 +226,8 @@ def build_raw_groups(
         for probability, component, _location, _method in entries:
             item = by_species.setdefault(component["pokemonId"], dict(component))
             item["rawRate"] += probability * disclosed_scale
+            item["minLevel"] = min(int(item.get("minLevel", component["minLevel"])), int(component["minLevel"]))
+            item["maxLevel"] = max(int(item.get("maxLevel", component["maxLevel"])), int(component["maxLevel"]))
         for assumed_share, component, _location, _method in assumed_entries:
             item = by_species.setdefault(component["pokemonId"], dict(component))
             item["rawRate"] += raw_total * assumed_share
@@ -458,24 +268,6 @@ def build_raw_groups(
                     "message": f"Direct Sweet Scent table totals {raw_total:.2%}; expected an exact 100% (or a normal 5% horde block).",
                 })
 
-        location_by_species: dict[int, dict[str, Any]] = {}
-        for _probability, component, component_location, _method in entries:
-            location_by_species[int(component["pokemonId"])] = component_location
-        for _share, component, component_location, _method in assumed_entries:
-            location_by_species[int(component["pokemonId"])] = component_location
-        location_hazards = merge_hazards([
-            hazard
-            for component in components
-            for hazard in hazards_for(
-                monster_by_id[int(component["pokemonId"])],
-                location_by_species.get(int(component["pokemonId"]), sample[2]),
-                method,
-            )
-        ])
-        all_component_locations = list(location_by_species.values()) or [sample[2]]
-        location_level_min = min(int(item.get("min_level") or 1) for item in all_component_locations)
-        location_level_max = max(int(item.get("max_level") or item.get("min_level") or 1) for item in all_component_locations)
-
         base = {
             "week": WEEK_BY_SEASON.get(str(season), str(season)),
             "season": season,
@@ -491,8 +283,8 @@ def build_raw_groups(
             "locations": [{
                 "region": region, "location": location_name, "locationId": location_id,
                 "encounterTypes": [encounter_type],
-                "levelMin": location_level_min, "levelMax": location_level_max,
-                "hazards": location_hazards,
+                "levelMin": min((int(c.get("minLevel", 0)) for c in components), default=0),
+                "levelMax": max((int(c.get("maxLevel", 0)) for c in components), default=0),
             }],
             "regions": [region],
             "components": components,
@@ -526,19 +318,6 @@ def build_raw_groups(
                 "message": "Lure-exclusive species share a modeled 5% slot.",
             }]
             lure_row = copy.deepcopy(base)
-            lure_location_hazards = list(location_hazards)
-            lure_locations_by_species = {int(component["pokemonId"]): location for component, location in lure_entries}
-            for component in unique_lure.values():
-                monster = monster_by_id[int(component["pokemonId"])]
-                component_location = lure_locations_by_species.get(int(component["pokemonId"]), sample[2])
-                lure_location_hazards.extend(hazards_for(monster, component_location, lure_method))
-            lure_row["locations"][0]["hazards"] = merge_hazards(lure_location_hazards)
-            lure_row["locations"][0]["levelMin"] = min(
-                [location_level_min] + [int(location.get("min_level") or 1) for _component, location in lure_entries]
-            )
-            lure_row["locations"][0]["levelMax"] = max(
-                [location_level_max] + [int(location.get("max_level") or location.get("min_level") or 1) for _component, location in lure_entries]
-            )
             lure_row.update({
                 "method": lure_method, "lure": True,
                 "components": lure_components, "validation": lure_notes,
@@ -571,9 +350,6 @@ def collapse_location_type_time(rows: list[dict[str, Any]]) -> list[dict[str, An
         row["times"] = times
         row["timeLabel"] = "Any time" if times == ["Morning", "Day", "Night"] else " & ".join(times)
         row["locations"][0]["encounterTypes"] = encounter_types
-        for item in matching[1:]:
-            merge_location_details(row["locations"][0], item["locations"][0])
-        refresh_group_hazards(row)
         collapsed.append(row)
     return collapsed
 
@@ -599,10 +375,9 @@ def merge_alternative_locations(rows: list[dict[str, Any]]) -> list[dict[str, An
                 if key not in locations:
                     locations[key] = copy.deepcopy(location)
                 else:
-                    merge_location_details(locations[key], location)
+                    locations[key]["encounterTypes"] = sorted(set(locations[key]["encounterTypes"]) | set(location["encounterTypes"]))
         row["locations"] = sorted(locations.values(), key=lambda item: (item["region"], item["location"], item["locationId"]))
         row["regions"] = sorted({item["region"] for item in row["locations"]})
-        refresh_group_hazards(row)
         merged.append(row)
     return merged
 
@@ -666,19 +441,12 @@ def build_special_groups(
     for season, week in WEEK_BY_SEASON.items():
         for time_name, field in TIME_FIELDS:
             by_species: dict[int, dict[str, Any]] = {}
-            honey_hazards: list[dict[str, Any]] = []
-            honey_levels: list[tuple[int, int]] = []
             raw_total = 0.0
             for monster, pokemon, location in honey_rows:
                 probability = parse_percent(location.get(field))
                 if probability is None:
                     continue
                 raw_total += probability
-                honey_hazards.extend(hazards_for(monster, location, "Honey Tree"))
-                honey_levels.append((
-                    int(location.get("min_level") or 1),
-                    int(location.get("max_level") or location.get("min_level") or 1),
-                ))
                 item = by_species.setdefault(int(monster["id"]), {
                     "pokemonId": int(monster["id"]), "pokemon": monster["name"], "share": 0.0,
                     "tier": int(pokemon["tier"]), "points": int(pokemon["points"]), "line": pokemon["line"],
@@ -698,15 +466,7 @@ def build_special_groups(
                 "incomplete": raw_total < 0.94, "rawTotal": raw_total,
                 "warning": "" if raw_total >= 0.94 else f"Numeric table totals {raw_total:.2%}.",
                 "confidence": "medium",
-                "locations": [{
-                    "region": "Sinnoh", "location": "Honey Tree", "locationId": -1,
-                    "encounterTypes": ["Honey Tree"],
-                    "levelMin": min((value[0] for value in honey_levels), default=1),
-                    "levelMax": max((value[1] for value in honey_levels), default=1),
-                    "hazards": merge_hazards([
-                        hazard for hazard in honey_hazards if int(hazard["pokemonId"]) in by_species
-                    ]),
-                }],
+                "locations": [{"region": "Sinnoh", "location": "Honey Tree", "locationId": -1, "encounterTypes": ["Honey Tree"]}],
                 "regions": ["Sinnoh"], "components": components,
                 "validation": [{
                     "level": "assumption", "code": "honey-tree-speed",
@@ -724,7 +484,6 @@ def build_special_groups(
                 "locations": [{
                     "region": region, "location": location_name, "locationId": -1000 - pokemon_id,
                     "encounterTypes": ["Fossil revival"],
-                    "levelMin": 1, "levelMax": 1, "hazards": [],
                 }],
                 "regions": [region],
                 "components": [{
@@ -757,12 +516,6 @@ def build_validation(
         "fatalChecks": sum(note.get("level") == "fatal" for note in all_notes),
         "warnings": sum(note.get("level") == "warning" for note in all_notes),
         "assumptions": sum(note.get("level") == "assumption" for note in all_notes),
-        "hazardGroups": sum(bool(group.get("hazards")) for group in groups),
-        "criticalHazardGroups": sum(group.get("hazardSeverity") == "critical" for group in groups),
-        "hazardLocations": sum(bool(location.get("hazards")) for group in groups for location in group.get("locations", [])),
-        "hazardSpecies": len({
-            int(hazard["pokemonId"]) for group in groups for hazard in group.get("hazards", [])
-        }),
     }
     issues = []
     for group in base_groups:
@@ -804,12 +557,12 @@ def main() -> int:
     monsters, dump_hash = load_dump(args.dump_zip)
 
     raw_groups = build_raw_groups(monsters, pokemon_by_id)
+    raw_groups = transform_random_tables(raw_groups)
+    raw_groups = add_safety(raw_groups, monsters)
     collapsed = collapse_location_type_time(raw_groups)
     base_groups = merge_alternative_locations(collapsed)
     special_groups = build_special_groups(base_groups, monsters, pokemon_by_id)
     groups = base_groups + special_groups
-    for group in groups:
-        refresh_group_hazards(group)
     groups.sort(key=lambda group: (
         group["week"], group["season"], group["method"],
         group["regions"][0] if group.get("regions") else "",
@@ -843,19 +596,20 @@ def main() -> int:
         "incomplete_variants": incomplete_raw,
         "methodology": {
             "hordes": "Normal 5% horde blocks and exact 100% early-route Sweet Scent-only tables are both normalized conditionally; near-100% rounding totals remain warnings.",
-            "lures": "A 5% total lure-exclusive slot is split equally when a location has multiple lure-exclusive species.",
+            "lures": "Lure uses 95% of the complete random pool, including natural hordes and unknown Safari rotation slots, plus a 5% lure-exclusive roll.",
+            "natural_hordes": "Ordinary walking, surfing and Safari tables include the natural 3×/5× horde roll and weight shares by individual Pokémon shown.",
             "special_tables": "Numeric encounter groups below 94% total are flagged incomplete and sorted after complete groups.",
-            "safari": "Safari Zone Gate is treated as a normal map; actual Safari Zones and the Great Marsh use the global successful-catch assumption.",
+            "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. Unknown slots score zero, making points/hour a lower bound.",
+            "safety": "Wild moves are reconstructed from the last four level-up moves at each encounter level. Safari suppresses battle hazards; horde redirection and normal-slot start-delay abilities are flagged separately.",
             "not_ranked": "Alpha schedules, legendary/mythical encounters, other unknown-rate phenomena/special encounters, eggs and Game Corner are not ranked.",
             "zorua_assumption": "Until a confirmed rate is exposed, Lostlorn Forest Zorua is modeled as 5% of the conditional 3× horde pool and the disclosed species share the remaining 95%.",
             "chum": "Chum keeps the fishing species table; additional encounters are represented through editable method speed.",
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
-            "safety_warnings": "Possible wild last-four level-up moves are reconstructed across each encounter level range. Self-KO, recoil, HP-cost, confusion and conditional sunlight-damage risks are flagged; Perish Song is excluded for hordes and all safety warnings are excluded for Safari methods.",
         },
-        "siteVersion": "0.8.5",
+        "siteVersion": "0.8.6",
         "generatedAt": "2026-08-01",
-        "encounterSource": "PokeMMO moddable resources dump uploaded 2026-07-31",
+        "encounterSource": "PokeMMO moddable resources dump(8) uploaded 2026-08-01",
         "encounterDumpSha256": dump_hash,
         "spriteSource": "PokeMMO moddable resources sprite dump uploaded 2026-07-29",
         "storageKey": "pokemmo-wartool-state-v7",
