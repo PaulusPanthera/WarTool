@@ -36,10 +36,10 @@ TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
 VALID_HAZARD_SEVERITIES = {"critical", "warning"}
 VALID_HAZARD_SOURCES = {"move", "ability"}
 EXPECTED_HAZARD_SUMMARY = {
-    "hazardGroups": 6748,
-    "criticalHazardGroups": 2385,
-    "hazardLocations": 8841,
-    "hazardSpecies": 190,
+    "hazardGroups": 6763,
+    "criticalHazardGroups": 2380,
+    "hazardLocations": 8856,
+    "hazardSpecies": 189,
 }
 
 EXPECTED_METHOD_COUNTS = {
@@ -47,14 +47,14 @@ EXPECTED_METHOD_COUNTS = {
     "5x Horde (Slowed)": 1724,
     "3x Horde": 610,
     "3x Horde (Slowed)": 610,
-    "Lure Singles": 3224,
+    "Lure Singles": 3219,
     "Singles": 3163,
     "Safari Singles": 392,
     "Lure Safari Singles": 75,
     "Fishing": 860,
-    "Fishing + Lure": 919,
+    "Fishing + Lure": 923,
     "Fishing + Chum Bucket": 860,
-    "Fishing + Lure + Chum Bucket": 919,
+    "Fishing + Lure + Chum Bucket": 923,
     "Rock Smash": 184,
     "Headbutt": 257,
     "Honey Tree": 12,
@@ -199,14 +199,14 @@ def main() -> int:
     line_count = len({item["line"] for item in pokemon}) if pokemon else 0
     if line_count != 282:
         fail(errors, f"Expected 282 evolution lines, found {line_count}")
-    if len(groups) != 15569:
-        fail(errors, f"Expected 15,569 display groups, found {len(groups)}")
+    if len(groups) != 15572:
+        fail(errors, f"Expected 15,572 display groups, found {len(groups)}")
     if int(validation.get("summary", {}).get("fatalChecks", -1)) != 0:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.4":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.4'.")
+    if meta.get("siteVersion") != "0.8.5":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.5'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -379,6 +379,20 @@ def main() -> int:
         fail(errors, "Bond Bridge lure groups still contain the obsolete Pidgeot slot.")
     if sum(any(component.get("pokemon") == "Leafeon" for component in group.get("components", [])) for group in bond_lure) != 11:
         fail(errors, "Expected Leafeon in all 11 Bond Bridge lure time/season groups.")
+
+    route_215_lure = [
+        group for group in groups
+        if group.get("method") == "Lure Singles"
+        and any(location.get("region") == "Sinnoh" and location.get("location") == "Route 215" for location in group.get("locations", []))
+    ]
+    if len(route_215_lure) != 11:
+        fail(errors, f"Expected 11 Route 215 lure time/season groups, found {len(route_215_lure)}.")
+    if any(any(component.get("pokemon") == "Lickilicky" for component in group.get("components", [])) for group in route_215_lure):
+        fail(errors, "Route 215 still contains the obsolete 5% Lickilicky lure slot.")
+    for group in route_215_lure:
+        alakazam = [component for component in group.get("components", []) if component.get("pokemon") == "Alakazam"]
+        if len(alakazam) != 1 or not math.isclose(float(alakazam[0].get("share", 0)), 0.05, rel_tol=0, abs_tol=1e-10):
+            fail(errors, f"Route 215 group {group.get('id')} is missing its 5% Alakazam lure slot.")
 
     zorua_groups = [
         group for group in groups

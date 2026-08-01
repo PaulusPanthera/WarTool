@@ -1,4 +1,4 @@
-WARtool v0.8.4 maintenance files
+WARtool v0.8.5 maintenance files
 
 - import_google_sheet.py: fetches and validates the two team catch tabs and Settings tab
 - rebuild_encounters.py: rebuilds planner encounter groups from a PokeMMO dump
