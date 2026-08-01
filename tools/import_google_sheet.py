@@ -54,7 +54,9 @@ KNOWN_SETTINGS = {
     "secretBonus",
     "secretChance",
     "safariBonus",
+    "safariCatchModel",
     "safariCatchChance",
+    "safariUnknownCatchChance",
     "johtoSafariRotationalTier",
     "greatMarshRotationalTier",
 }
@@ -382,6 +384,16 @@ def import_settings_sheet(text: str, label: str) -> SettingsResult:
                     result.warnings.append(f"{label} row {row_number}: {key} must be an integer from -1 to 7")
                     continue
                 value = int(value)
+            elif key == "safariCatchModel":
+                if not float(value).is_integer() or int(value) not in {0, 1}:
+                    result.rejected += 1
+                    result.warnings.append(f"{label} row {row_number}: safariCatchModel must be 1 (species estimates) or 0 (global override)")
+                    continue
+                value = int(value)
+            elif key in {"safariCatchChance", "safariUnknownCatchChance"} and not (0 <= float(value) <= 1):
+                result.rejected += 1
+                result.warnings.append(f"{label} row {row_number}: {key} must be between 0 and 1")
+                continue
             result.settings[key] = value
         else:
             result.rejected += 1

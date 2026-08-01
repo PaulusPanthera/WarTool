@@ -38,6 +38,8 @@ uniqueBonus
 secretBonus
 secretChance
 safariBonus
+safariCatchModel
+safariUnknownCatchChance
 safariCatchChance
 johtoSafariRotationalTier
 greatMarshRotationalTier
@@ -47,6 +49,15 @@ The Safari rotational tier settings accept `-1` for unscored or an integer from
 `0` through `7`. They provide the team/default estimate for the undocumented
 Johto 10% and Great Marsh 20% encounter slots. Each browser can override these
 two values locally from WARtool's Settings tab.
+
+Safari catch settings:
+
+- `safariCatchModel = 1` uses matched Johto/Great Marsh species estimates and
+  `safariUnknownCatchChance` for unknown rotationals, unmatched species, Kanto
+  Safari and Hoenn Safari. This is the recommended default.
+- `safariCatchModel = 0` applies `safariCatchChance` globally to every Safari
+  species instead.
+- Chance values are decimals from `0` through `1`.
 
 Encounter speeds use the prefix `method.`, for example:
 

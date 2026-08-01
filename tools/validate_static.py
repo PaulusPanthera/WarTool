@@ -41,7 +41,7 @@ EXPECTED_METHOD_COUNTS = {
     "3x Horde (Slowed)": 623,
     "Lure Singles": 3435,
     "Singles": 4174,
-    "Safari Singles": 392,
+    "Safari Singles": 400,
     "Lure Safari Singles": 75,
     "Fishing": 860,
     "Fishing + Lure": 1056,
@@ -124,7 +124,9 @@ def main() -> int:
         "data/meta.js", "data/roster.js", "data/live/state.json", "data/live/import-report.json",
         "data/live/sources.json", "favicon.svg", "site.webmanifest", ".nojekyll", "server.py",
         "START_WARTOOL.bat", "tools/rebuild_encounters.py", "tools/enrich_encounters.py",
-        "tools/import_google_sheet.py", "assets/encounter-slowdown.png",
+        "tools/import_google_sheet.py", "tools/build_static_site.py", "tools/SETTINGS_SHEET_TEMPLATE.csv",
+        "tools/GOOGLE_SHEET_SETUP.md", "tools/MUSH_WARtool_Google_Sheet_Template.xlsx",
+        "assets/encounter-slowdown.png", "data/safari-rates.json",
     ]
     for relative in required:
         if not (ROOT / relative).is_file():
@@ -144,9 +146,10 @@ def main() -> int:
         live = json.loads((ROOT / "data/live/state.json").read_text(encoding="utf-8"))
         import_report = json.loads((ROOT / "data/live/import-report.json").read_text(encoding="utf-8"))
         live_sources = json.loads((ROOT / "data/live/sources.json").read_text(encoding="utf-8"))
+        safari_rates = json.loads((ROOT / "data/safari-rates.json").read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError, KeyError) as error:
         fail(errors, f"Data parsing failed: {error}")
-        groups, validation, pokemon, meta, roster, live, import_report, live_sources = [], {}, [], {}, [], {}, {}, {}
+        groups, validation, pokemon, meta, roster, live, import_report, live_sources, safari_rates = [], {}, [], {}, [], {}, {}, {}, {}
 
     # HTML and local assets.
     parser = IdParser()
@@ -177,7 +180,7 @@ def main() -> int:
         fail(errors, "Dark-mode contrast release rules are missing.")
     if "v0.7.1 dark-mode readability hotfix" not in css_text:
         fail(errors, "Dark-mode readability hotfix rules are missing.")
-    for marker in ("Redirection risk", "Start delay", "safari_coverage", "safety_warnings", "slowdown_abilities", "johtoSafariRotationalTier", "greatMarshRotationalTier", "rotationalTierOptions"):
+    for marker in ("Redirection risk", "Start delay", "safari_coverage", "safety_warnings", "slowdown_abilities", "johtoSafariRotationalTier", "greatMarshRotationalTier", "rotationalTierOptions", "safariCatchModel", "safariUnknownCatchChance", "safariCaptureFor", "expected captured points/shiny"):
         if marker not in app_text:
             fail(errors, f"Safety/slowdown UI marker missing from app.js: {marker}")
     if "encounter-slowdown.png" not in app_text:
@@ -193,14 +196,18 @@ def main() -> int:
     line_count = len({item["line"] for item in pokemon}) if pokemon else 0
     if line_count != 282:
         fail(errors, f"Expected 282 evolution lines, found {line_count}")
-    if len(groups) != 17489:
-        fail(errors, f"Expected 17,489 display groups, found {len(groups)}")
+    if len(groups) != 17497:
+        fail(errors, f"Expected 17,497 display groups, found {len(groups)}")
     if int(validation.get("summary", {}).get("fatalChecks", -1)) != 0:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.7":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.7'.")
+    if meta.get("siteVersion") != "0.8.8":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.8'.")
+    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.8":
+        fail(errors, "VERSION.txt is not 0.8.8.")
+    if "WARtool v0.8.8" not in index_text or 'APP_VERSION = "0.8.8"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
+        fail(errors, "Public page and local server are not consistently versioned as 0.8.8.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -243,6 +250,15 @@ def main() -> int:
                 fail(errors, f"Group {index} references unknown Pokémon id {pid}")
             if component.get("line") not in known_lines:
                 fail(errors, f"Group {index} references unknown line {component.get('line')!r}")
+            capture = component.get("safariCapture")
+            if capture:
+                if not group.get("safari"):
+                    fail(errors, f"Group {index} contains Safari capture data outside a Safari method.")
+                success = float(capture.get("ballsOnlySuccess", 0) or 0)
+                if not (0 < success <= 1):
+                    fail(errors, f"Group {index} has invalid Safari catch success {success} for {component.get('pokemon')}.")
+                if capture.get("scope") not in {"Johto Safari Zone", "Sinnoh Great Marsh"}:
+                    fail(errors, f"Group {index} has invalid Safari capture scope {capture.get('scope')!r}.")
         if group.get("incomplete"):
             incomplete += 1
 
@@ -395,13 +411,65 @@ def main() -> int:
         if pool.get("settingKey") != expected_key:
             fail(errors, f"Safari group {group.get('id')} uses rotational setting {pool.get('settingKey')!r}, expected {expected_key!r}.")
 
+    safari_groups = [group for group in groups if group.get("safari")]
+    if len(safari_groups) != 475:
+        fail(errors, f"Expected 475 Safari ranking groups after region-specific catch splitting, found {len(safari_groups)}.")
+    if any(len({location.get("region") for location in group.get("locations", [])}) > 1 for group in safari_groups):
+        fail(errors, "Safari groups from different regions were merged despite region-specific capture models.")
+    matched_capture_groups = [
+        group for group in safari_groups
+        if any(component.get("safariCapture") for component in group.get("components", []))
+    ]
+    if len(matched_capture_groups) != 278:
+        fail(errors, f"Expected 278 Safari groups with at least one matched species catch estimate, found {len(matched_capture_groups)}.")
+    if any(component.get("safariCapture") for group in groups if not group.get("safari") for component in group.get("components", [])):
+        fail(errors, "Safari capture estimates leaked into non-Safari groups.")
+    pidgey_estimates = [
+        component.get("safariCapture", {}).get("ballsOnlySuccess")
+        for group in safari_groups
+        for component in group.get("components", [])
+        if component.get("pokemon") == "Pidgey" and component.get("safariCapture")
+    ]
+    if not pidgey_estimates or any(not math.isclose(float(value), 0.7392, rel_tol=0, abs_tol=1e-7) for value in pidgey_estimates):
+        fail(errors, "Johto Safari Pidgey catch estimate is missing or changed from 73.92%.")
+    whiscash_estimates = [
+        component.get("safariCapture", {}).get("ballsOnlySuccess")
+        for group in safari_groups
+        for component in group.get("components", [])
+        if component.get("pokemon") == "Whiscash" and component.get("safariCapture")
+    ]
+    if not whiscash_estimates or any(not math.isclose(float(value), 0.9773846, rel_tol=0, abs_tol=1e-7) for value in whiscash_estimates):
+        fail(errors, "Great Marsh Whiscash catch estimate is missing or changed.")
+    source_meta = safari_rates.get("source", {})
+    if source_meta.get("strategy") != "Balls only, up to 30 Safari Balls":
+        fail(errors, "Safari-rate source strategy is missing or changed.")
+    if source_meta.get("name") != "ProfessorRex/HGSS-Safari-Zone" or not str(source_meta.get("url", "")).startswith("https://github.com/ProfessorRex/HGSS-Safari-Zone"):
+        fail(errors, "Safari-rate source attribution is missing or changed.")
+    expected_rate_counts = {"johto": 153, "sinnoh": 34}
+    for region_key, expected_count in expected_rate_counts.items():
+        rates = safari_rates.get(region_key)
+        if not isinstance(rates, dict) or len(rates) != expected_count:
+            fail(errors, f"Safari-rate table {region_key!r} contains {len(rates) if isinstance(rates, dict) else 0} entries, expected {expected_count}.")
+        elif any(not (0 < float(row.get("ballsOnlySuccess", 0) or 0) <= 1) for row in rates.values()):
+            fail(errors, f"Safari-rate table {region_key!r} contains an invalid balls-only success value.")
+
     importer_text = (ROOT / "tools/import_google_sheet.py").read_text(encoding="utf-8")
     settings_template = (ROOT / "tools/SETTINGS_SHEET_TEMPLATE.csv").read_text(encoding="utf-8-sig")
-    for setting_key in ("johtoSafariRotationalTier", "greatMarshRotationalTier"):
+    for setting_key in ("johtoSafariRotationalTier", "greatMarshRotationalTier", "safariCatchModel", "safariUnknownCatchChance", "safariCatchChance"):
         if setting_key not in importer_text:
             fail(errors, f"Google Sheet importer does not recognize {setting_key}.")
-        if f"{setting_key},-1" not in settings_template:
-            fail(errors, f"Settings CSV template is missing {setting_key} default -1.")
+        expected_default = {
+            "johtoSafariRotationalTier": "-1",
+            "greatMarshRotationalTier": "-1",
+            "safariCatchModel": "1",
+            "safariUnknownCatchChance": "0.52",
+            "safariCatchChance": "1",
+        }[setting_key]
+        if f"{setting_key},{expected_default}" not in settings_template:
+            fail(errors, f"Settings CSV template is missing {setting_key} default {expected_default}.")
+
+    if "version: 8" not in app_text or "expected caught pts" not in app_text or "loss est." not in app_text:
+        fail(errors, "Safari capture model migration or ranking-card labels are missing from app.js.")
 
     # Roster separation.
     team_counts = Counter(item.get("teamName") for item in roster if item.get("active", True))

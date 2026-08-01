@@ -1,16 +1,20 @@
-WARtool v0.8.7 patch
+WARtool v0.8.8 species-specific Safari catch patch
 
 Copy everything inside this ZIP into the existing connected WarTool repository
 folder and replace matching files.
 
 Suggested commit:
-Fix multi-battle warnings and Safari rotations v0.8.7
+Use species-specific Safari catch rates v0.8.8
 
-After pushing, add these optional rows to the currently published Settings tab
-if you want team-wide defaults:
+The default Safari model now uses bundled community balls-only estimates for
+matched Johto Safari and Great Marsh species. Unknown rotationals and unmatched
+species use a 52% fallback. The optional global override remains available.
 
-johtoSafariRotationalTier       -1
-greatMarshRotationalTier       -1
+Optional published Settings rows:
 
-Use -1 for unscored or 0–7 for the active rotational tier. Visitors can also
-select a local browser override in WARtool Settings.
+safariCatchModel               1
+safariUnknownCatchChance       0.52
+safariCatchChance              1
+
+Model 1 uses species estimates plus the fallback. Model 0 applies the global
+safariCatchChance value to every Safari species.

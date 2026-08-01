@@ -5,6 +5,8 @@ uniqueBonus,8
 secretBonus,20
 secretChance,0.0625
 safariBonus,10
+safariCatchModel,1
+safariUnknownCatchChance,0.52
 safariCatchChance,1
 johtoSafariRotationalTier,-1
 greatMarshRotationalTier,-1

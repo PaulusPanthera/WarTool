@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 POKEMON_PATH = ROOT / "data" / "pokemon.js"
 GROUPS_PATH = ROOT / "data" / "groups.js"
 META_PATH = ROOT / "data" / "meta.js"
+SAFARI_RATES_PATH = ROOT / "data" / "safari-rates.json"
 
 SEASONS = ("Spring", "Summer", "Autumn", "Winter")
 WEEK_BY_SEASON = {
@@ -82,6 +83,38 @@ def load_dump(path: Path) -> tuple[list[dict[str, Any]], str]:
     if not isinstance(monsters, list) or not monsters:
         raise ValueError("info/monsters.json is empty or invalid")
     return monsters, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_safari_rates(path: Path = SAFARI_RATES_PATH) -> dict[str, Any]:
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or not isinstance(payload.get("johto"), dict) or not isinstance(payload.get("sinnoh"), dict):
+        raise ValueError(f"Invalid Safari-rate data: {path}")
+    return payload
+
+
+def safari_capture_for(rates: dict[str, Any], region: str, pokemon_id: int) -> dict[str, Any] | None:
+    if region == "Johto":
+        source = rates.get("johto", {}).get(str(pokemon_id))
+        scope = "Johto Safari Zone"
+    elif region == "Sinnoh":
+        source = rates.get("sinnoh", {}).get(str(pokemon_id))
+        scope = "Sinnoh Great Marsh"
+    else:
+        return None
+    if not source:
+        return None
+    success = float(source.get("ballsOnlySuccess", 0) or 0)
+    if not (0 < success <= 1):
+        return None
+    return {
+        "scope": scope,
+        "ballsOnlySuccess": round(success, 7),
+        "fleePerTurn": round(float(source.get("fleePerTurn", 0) or 0), 7),
+        "catchPerBall": round(float(source.get("catchPerBall", 0) or 0), 7),
+        "strategy": str(rates.get("source", {}).get("strategy") or "Balls only, up to 30 Safari Balls"),
+    }
 
 
 def canonical_region(value: Any) -> str:
@@ -142,13 +175,18 @@ def component_key(components: list[dict[str, Any]]) -> tuple[Any, ...]:
             bool(item.get("lureExclusive")), bool(item.get("unknown")),
             tuple((h.get("name"), h.get("kind"), h.get("severity"), h.get("levelRange")) for h in item.get("hazards", [])),
             tuple(item.get("slowAbilities", [])),
+            (
+                str((item.get("safariCapture") or {}).get("scope", "")),
+                round(float((item.get("safariCapture") or {}).get("ballsOnlySuccess", 0) or 0), 7),
+                round(float((item.get("safariCapture") or {}).get("fleePerTurn", 0) or 0), 7),
+            ),
         )
         for item in components
     )
 
 
 def build_raw_groups(
-    monsters: list[dict[str, Any]], pokemon_by_id: dict[int, dict[str, Any]]
+    monsters: list[dict[str, Any]], pokemon_by_id: dict[int, dict[str, Any]], safari_rates: dict[str, Any]
 ) -> list[dict[str, Any]]:
     numeric: dict[tuple[Any, ...], list[tuple[float, dict[str, Any], dict[str, Any], str]]] = collections.defaultdict(list)
     assumed_unknown: dict[tuple[Any, ...], list[tuple[float, dict[str, Any], dict[str, Any], str]]] = collections.defaultdict(list)
@@ -194,6 +232,8 @@ def build_raw_groups(
                         "minLevel": int(location.get("min_level", 0) or 0),
                         "maxLevel": int(location.get("max_level", 0) or 0),
                     }
+                    if safari_here:
+                        component["safariCapture"] = safari_capture_for(safari_rates, location["region_name"], pokemon_id)
                     probability = parse_percent(value)
                     if probability is not None:
                         numeric[key].append((probability, component, location, method))
@@ -253,7 +293,7 @@ def build_raw_groups(
         if safari:
             notes.append({
                 "level": "assumption", "code": "safari-catch",
-                "message": "Safari result uses the global successful-catch assumption.",
+                "message": "Safari results use species-specific balls-only catch estimates where available; unmatched species use the editable fallback unless a global override is selected.",
             })
         if horde_3x or horde_5x:
             # Normal maps expose a 5% horde block. Early-game maps can instead
@@ -555,8 +595,9 @@ def main() -> int:
     pokemon = load_assignment(POKEMON_PATH, "WAR_POKEMON")
     pokemon_by_id = {int(item["id"]): item for item in pokemon}
     monsters, dump_hash = load_dump(args.dump_zip)
+    safari_rates = load_safari_rates()
 
-    raw_groups = build_raw_groups(monsters, pokemon_by_id)
+    raw_groups = build_raw_groups(monsters, pokemon_by_id, safari_rates)
     raw_groups = transform_random_tables(raw_groups)
     raw_groups = add_safety(raw_groups, monsters)
     collapsed = collapse_location_type_time(raw_groups)
@@ -601,7 +642,7 @@ def main() -> int:
             "lures": "Lure uses 95% of the complete random pool, including natural hordes and unknown Safari rotation slots, plus a 5% lure-exclusive roll.",
             "natural_hordes": "Ordinary walking, surfing and Safari tables include the natural 3×/5× horde roll and weight shares by individual Pokémon shown.",
             "special_tables": "Numeric encounter groups below 94% total are flagged incomplete and sorted after complete groups.",
-            "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. The slot is unscored by default and can be assigned a tier in Settings.",
+            "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. The slot is unscored by default and can be assigned a tier in Settings. Expected points use species-specific community balls-only catch estimates for matched Johto/Great Marsh species, an editable fallback for unmatched/unknown species, or an optional global override.",
             "safety": "Wild moves are reconstructed from the last four level-up moves at each encounter level. Redirection is flagged for hordes, natural hordes, Dark Grass doubles and Lure doubles. Safari suppresses battle hazards and encounter-start ability delays.",
             "not_ranked": "Alpha schedules, legendary/mythical encounters, other unknown-rate phenomena/special encounters, eggs and Game Corner are not ranked.",
             "zorua_assumption": "Until a confirmed rate is exposed, Lostlorn Forest Zorua is modeled as 5% of the conditional 3× horde pool and the disclosed species share the remaining 95%.",
@@ -609,12 +650,12 @@ def main() -> int:
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
         },
-        "siteVersion": "0.8.7",
+        "siteVersion": "0.8.8",
         "generatedAt": "2026-08-01",
         "encounterSource": "PokeMMO moddable resources dump(8) uploaded 2026-08-01",
         "encounterDumpSha256": dump_hash,
         "spriteSource": "PokeMMO moddable resources sprite dump uploaded 2026-07-29",
-        "storageKey": "pokemmo-wartool-state-v7",
+        "storageKey": "pokemmo-wartool-state-v8",
     }
     META_PATH.write_text(
         "window.WAR_META=" + json.dumps(meta, ensure_ascii=False, separators=(",", ":")) + ";\n",

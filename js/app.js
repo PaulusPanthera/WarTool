@@ -15,7 +15,7 @@ const ROTATIONAL_SETTING_KEYS = Object.freeze(["johtoSafariRotationalTier", "gre
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const STORAGE_KEY = META.storageKey || "pokemmo-wartool-state-v3";
-const OLD_STORAGE_KEYS = ["pokemmo-wartool-state-v6", "pokemmo-wartool-state-v5", "pokemmo-wartool-state-v4", "pokemmo-wartool-state-v3", "pokemmo-wartool-state-v2", "pokemmo-wartool-state-v1"];
+const OLD_STORAGE_KEYS = ["pokemmo-wartool-state-v7", "pokemmo-wartool-state-v6", "pokemmo-wartool-state-v5", "pokemmo-wartool-state-v4", "pokemmo-wartool-state-v3", "pokemmo-wartool-state-v2", "pokemmo-wartool-state-v1"];
 
 const DEFAULT_SETTINGS = {
   baseShinyDenominator: 30000,
@@ -24,7 +24,9 @@ const DEFAULT_SETTINGS = {
   secretBonus: 20,
   secretChance: 1 / 16,
   safariBonus: 10,
+  safariCatchModel: 1,
   safariCatchChance: 1,
+  safariUnknownCatchChance: 0.52,
   johtoSafariRotationalTier: -1,
   greatMarshRotationalTier: -1,
   methodSpeeds: {
@@ -48,7 +50,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const DEFAULT_STATE = {
-  version: 7,
+  version: 8,
   settings: structuredClone(DEFAULT_SETTINGS),
   rotationalOverrides: {},
   players: structuredClone(PACKAGED_ROSTER),
@@ -190,7 +192,7 @@ function loadState() {
       ? migratedCatches
       : structuredClone(PACKAGED_PREVIEW_CATCHES);
     return {
-      version: 7,
+      version: 8,
       settings: deepMergeSettings(parsed.settings),
       rotationalOverrides: parsed.rotationalOverrides && typeof parsed.rotationalOverrides === "object" ? { ...parsed.rotationalOverrides } : {},
       players,
@@ -353,12 +355,52 @@ function safariRotationalLabel(group, settings) {
   const tier = safariRotationalTier(group, settings);
   return tier >= 0 ? `T${tier} rotational` : "rotational unscored";
 }
+function clampChance(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 && number <= 1 ? number : fallback;
+}
+function safariUsesGlobalOverride(settings) {
+  return Number(settings.safariCatchModel) === 0;
+}
+function safariCaptureFor(component, settings) {
+  if (safariUsesGlobalOverride(settings)) {
+    return {
+      chance: clampChance(settings.safariCatchChance, 1),
+      source: "Global override",
+      specific: false,
+    };
+  }
+  const specific = Number(component.safariCapture?.ballsOnlySuccess);
+  if (Number.isFinite(specific) && specific > 0 && specific <= 1) {
+    return {
+      chance: specific,
+      source: component.safariCapture.scope || "Species estimate",
+      specific: true,
+      fleePerTurn: clampChance(component.safariCapture.fleePerTurn, 0),
+      strategy: component.safariCapture.strategy || "Balls only, up to 30 Safari Balls",
+    };
+  }
+  return {
+    chance: clampChance(settings.safariUnknownCatchChance, 0.52),
+    source: component.unknown ? "Unknown rotational fallback" : "Unmatched-species fallback",
+    specific: false,
+  };
+}
+function safariCaptureBadge(score) {
+  if (!score || !Number.isFinite(score.captureAverage)) return "";
+  return `<span class="safety-badge safari-capture">${formatPercent(1 - score.captureAverage, 0)} loss est.</span>`;
+}
 function scoreGroup(group, mode, playerId, context = getCatchContext()) {
   const settings = getEffectiveSettings();
   const selectedPlayerLines = context.playerLines.get(playerId) || new Set();
   const rotationalTier = safariRotationalTier(group, settings);
   const rotationalBasePoints = rotationalTier >= 0 ? TIER_POINTS[rotationalTier] : 0;
-  let weighted = 0;
+  const secretEV = eligibleSecret(group.method) ? settings.secretBonus * settings.secretChance : 0;
+  const safariEV = group.safari ? settings.safariBonus : 0;
+  let weightedBase = 0;
+  let weightedCaught = 0;
+  let captureAverage = group.safari ? 0 : 1;
+  let speciesCaptureCoverage = 0;
   let missingShare = 0;
   const detail = group.components.map(c => {
     const unknown = Boolean(c.unknown || Number(c.pokemonId) <= 0);
@@ -378,18 +420,36 @@ function scoreGroup(group, mode, playerId, context = getCatchContext()) {
       else if (mode === "player") score = (duplicatePlayer ? 1 : c.points) + (missingTeam ? settings.uniqueBonus : 0);
       else if (mode === "duplicate") score = 1;
     }
-    weighted += c.share * score;
+    const capture = group.safari ? safariCaptureFor(c, settings) : { chance: 1, source: "Guaranteed after battle", specific: false };
+    const pointsIfCaught = score + secretEV + safariEV;
+    weightedBase += c.share * score;
+    if (group.safari) {
+      weightedCaught += c.share * capture.chance * pointsIfCaught;
+      captureAverage += c.share * capture.chance;
+      if (capture.specific) speciesCaptureCoverage += c.share;
+    }
     if (missingTeam) missingShare += c.share;
-    return { ...c, score, missingTeam, duplicatePlayer, unknown, rotationalEstimated, rotationalTier };
+    return {
+      ...c, score, pointsIfCaught, missingTeam, duplicatePlayer, unknown,
+      rotationalEstimated, rotationalTier,
+      catchChance: capture.chance, catchSource: capture.source,
+      catchSpecific: capture.specific, fleePerTurn: capture.fleePerTurn || 0,
+      catchStrategy: capture.strategy || "",
+    };
   });
-  const secretEV = eligibleSecret(group.method) ? settings.secretBonus * settings.secretChance : 0;
-  const safariEV = group.safari ? settings.safariBonus : 0;
-  const average = weighted + secretEV + safariEV;
+  const potentialAverage = weightedBase + secretEV + safariEV;
+  const average = group.safari ? weightedCaught : potentialAverage;
   const encountersPerHour = Number(settings.methodSpeeds[group.method] || 0);
   const denominator = shinyDenominatorForMethod(group.method, settings);
-  const catchMultiplier = group.safari ? settings.safariCatchChance : 1;
-  const pointsPerHour = encountersPerHour / denominator * average * catchMultiplier;
-  return { average, encountersPerHour, denominator, catchMultiplier, pointsPerHour, detail, missingShare, secretEV, safariEV, settings, rotationalTier, rotationalBasePoints };
+  const catchMultiplier = group.safari ? captureAverage : 1;
+  const pointsPerHour = encountersPerHour / denominator * average;
+  return {
+    average, potentialAverage, encountersPerHour, denominator, catchMultiplier,
+    captureAverage, captureLoss: group.safari ? 1 - captureAverage : 0,
+    speciesCaptureCoverage, captureMode: group.safari ? (safariUsesGlobalOverride(settings) ? "global" : "species") : "none",
+    pointsPerHour, detail, missingShare, secretEV, safariEV, settings,
+    rotationalTier, rotationalBasePoints,
+  };
 }
 
 function parseCsv(text) {
@@ -512,7 +572,7 @@ function parseRemoteCatches(text, forcedTeam = null) {
 function parseRemoteSettings(text) {
   const settings = { methodSpeeds: {} };
   const errors = [];
-  const known = new Set(["baseShinyDenominator","eventWildBoost","uniqueBonus","secretBonus","secretChance","safariBonus","safariCatchChance","johtoSafariRotationalTier","greatMarshRotationalTier"]);
+  const known = new Set(["baseShinyDenominator","eventWildBoost","uniqueBonus","secretBonus","secretChance","safariBonus","safariCatchModel","safariCatchChance","safariUnknownCatchChance","johtoSafariRotationalTier","greatMarshRotationalTier"]);
   for (const row of csvObjects(text)) {
     const rawKey = String(firstField(row, ["Setting", "Key", "Name"])).trim();
     const value = numericValue(firstField(row, ["Value", "Number"]));
@@ -522,6 +582,10 @@ function parseRemoteSettings(text) {
     } else if (known.has(rawKey)) {
       if (["johtoSafariRotationalTier","greatMarshRotationalTier"].includes(rawKey) && (!Number.isInteger(value) || value < -1 || value > 7)) {
         errors.push(`Settings row ${row._row}: ${rawKey} must be an integer from -1 to 7.`);
+      } else if (rawKey === "safariCatchModel" && (!Number.isInteger(value) || ![0, 1].includes(value))) {
+        errors.push(`Settings row ${row._row}: safariCatchModel must be 1 (species estimates) or 0 (global override).`);
+      } else if (["safariCatchChance","safariUnknownCatchChance"].includes(rawKey) && (value < 0 || value > 1)) {
+        errors.push(`Settings row ${row._row}: ${rawKey} must be between 0 and 1.`);
       } else settings[rawKey] = value;
     } else errors.push(`Settings row ${row._row}: unknown key “${rawKey}”.`);
   }
@@ -949,10 +1013,10 @@ function rankingCardHtml(row, index) {
     <div class="hunt-title">
       <h3>${escapeHtml(present.title)}</h3>
       <div class="hunt-meta">${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)}</div>
-      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadges(row.group)}${row.group.safariPool ? `<span class="safety-badge coverage">${formatPercent(row.group.safariPool.documentedTotal,0)} documented · ${escapeHtml(safariRotationalLabel(row.group, row.score.settings))}</span>` : ""}</div>
+      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadges(row.group)}${row.group.safari ? safariCaptureBadge(row.score) : ""}${row.group.safariPool ? `<span class="safety-badge coverage">${formatPercent(row.group.safariPool.documentedTotal,0)} documented · ${escapeHtml(safariRotationalLabel(row.group, row.score.settings))}</span>` : ""}</div>
       ${compositionHtml(row.score.detail, 4)}${alt}
     </div>
-    <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} avg pts</div></div>
+    <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} ${row.group.safari ? "expected caught pts" : "avg pts"}</div></div>
   </article>`;
 }
 function bindRankingCards(grid, mode, playerId) {
@@ -1109,20 +1173,30 @@ function openSpotDialog(group, mode, playerId) {
   const rows = score.detail.map(c => {
     const raw = rawSourceFor(group, c);
     const status = c.rotationalEstimated ? `<span class="confidence medium">T${c.rotationalTier} estimate</span>` : c.unknown ? '<span class="confidence medium">rotation unscored</span>' : c.duplicatePlayer ? '<span class="confidence low">duplicate</span>' : c.missingTeam ? '<span class="confidence high">unique open</span>' : '<span class="confidence medium">line caught</span>';
-    return `<tr><td>${componentSprite(c)}${pokemonSafetyMarkers(c)}${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td><td class="numeric">${c.unknown && !c.rotationalEstimated ? "—" : formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
+    const catchCell = group.safari
+      ? `<td class="numeric"><strong>${formatPercent(c.catchChance)}</strong><small class="muted">${escapeHtml(c.catchSource)}</small></td>`
+      : "";
+    return `<tr><td>${componentSprite(c)}${pokemonSafetyMarkers(c)}${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td>${catchCell}<td class="numeric">${c.unknown && !c.rotationalEstimated ? "—" : formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
   }).join("");
   const notes = group.validation.map(note => `<div class="validation-note ${note.level}">${escapeHtml(note.message)}</div>`).join("");
   const hazardRows = (group.hazards || []).map(h => `<div class="safety-row ${h.severity}"><strong>${escapeHtml(h.pokemon)} · ${escapeHtml(h.name)}</strong><span>${escapeHtml(h.levelRange ? `Lv. ${h.levelRange} · ` : "")}${escapeHtml(h.consequence)}</span><small>${escapeHtml(h.counter)}</small></div>`).join("");
   const slowdownRows = (group.slowdowns || []).map(x => `<div class="safety-row slowdown"><strong>${escapeHtml(x.pokemon)} · ${escapeHtml(x.abilities.join(" / "))}</strong><span>May add a start-of-battle animation or message.</span></div>`).join("");
   const safetySection = hazardRows || slowdownRows ? `<section class="dialog-section"><h4>Shiny safety</h4><div class="safety-list">${hazardRows}${slowdownRows}</div></section>` : "";
   const locations = group.locations.map(location => `<div class="location-option"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)}</small></div><small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div>`).join("");
-  const formula = `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points${score.catchMultiplier !== 1 ? ` × ${formatPercent(score.catchMultiplier,0)} Safari catch success` : ""}<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`;
+  const captureExplanation = group.safari
+    ? score.captureMode === "global"
+      ? `Global Safari catch override: ${formatPercent(score.captureAverage)} success (${formatPercent(score.captureLoss)} loss).`
+      : `Weighted Safari catch estimate: ${formatPercent(score.captureAverage)} success (${formatPercent(score.captureLoss)} loss). ${formatPercent(score.speciesCaptureCoverage)} of the shown pool has matched Johto/Great Marsh species data; the remainder uses the ${formatPercent(score.settings.safariUnknownCatchChance)} fallback.`
+    : "";
+  const formula = group.safari
+    ? `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} expected captured points/shiny<br><small>${escapeHtml(captureExplanation)}</small><br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`
+    : `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`;
   $("#spotDialogContent").innerHTML = `<div class="dialog-body">
     <div class="dialog-title"><div><h3>${escapeHtml(present.title)}</h3><p>${escapeHtml(group.week)} · ${escapeHtml(group.season)} · ${escapeHtml(group.timeLabel)} · ${escapeHtml(group.method)}</p></div></div>
-    <div class="dialog-score-grid"><div class="dialog-score"><span>Points/hour</span><strong>${formatNumber(score.pointsPerHour,4)}</strong></div><div class="dialog-score"><span>Average points/shiny</span><strong>${formatNumber(score.average,2)}</strong></div><div class="dialog-score"><span>Encounters/hour</span><strong>${formatNumber(score.encountersPerHour,0)}</strong></div></div>
-    <p class="muted">Scoring mode: <strong>${escapeHtml(modeLabel)}</strong>. Secret expected value: ${formatNumber(score.secretEV,2)}. Safari bonus expected value: ${formatNumber(score.safariEV,2)}.</p>
+    <div class="dialog-score-grid"><div class="dialog-score"><span>Points/hour</span><strong>${formatNumber(score.pointsPerHour,4)}</strong></div><div class="dialog-score"><span>${group.safari ? "Expected captured points/shiny" : "Average points/shiny"}</span><strong>${formatNumber(score.average,2)}</strong></div><div class="dialog-score"><span>${group.safari ? "Catch success estimate" : "Encounters/hour"}</span><strong>${group.safari ? formatPercent(score.captureAverage,1) : formatNumber(score.encountersPerHour,0)}</strong></div></div>
+    <p class="muted">Scoring mode: <strong>${escapeHtml(modeLabel)}</strong>. Secret expected value if caught: ${formatNumber(score.secretEV,2)}. Safari bonus if caught: ${formatNumber(score.safariEV,2)}.${group.safari ? ` Balls-only community estimates model up to 30 Safari Balls; unmatched species and unknown rotationals use the editable fallback unless the global override is selected.` : ""}</p>
     <section class="dialog-section"><h4>Equivalent locations</h4><div class="location-list">${locations}</div></section>
-    <section class="dialog-section"><h4>Encounter calculation</h4><p class="muted">${escapeHtml(methodExplanation)}</p><table class="raw-table"><thead><tr><th>Pokémon</th><th>Raw source</th><th>Final share</th><th>Score if shiny</th><th>Live status</th></tr></thead><tbody>${rows}</tbody></table></section>
+    <section class="dialog-section"><h4>Encounter calculation</h4><p class="muted">${escapeHtml(methodExplanation)}</p><table class="raw-table"><thead><tr><th>Pokémon</th><th>Raw source</th><th>Final share</th>${group.safari ? "<th>Catch estimate</th>" : ""}<th>Score if caught</th><th>Live status</th></tr></thead><tbody>${rows}</tbody></table></section>
     ${safetySection}
     <section class="dialog-section"><h4>Points/hour formula</h4><div class="calc-box">${formula}</div></section>
     ${notes ? `<section class="dialog-section"><h4>Validation and assumptions</h4><div class="note-list">${notes}</div></section>` : ""}
@@ -1139,8 +1213,8 @@ function resetRankingFilters() {
   renderRankings();
 }
 function downloadRankingCsv() {
-  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage"];
-  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : ""]);
+  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage","safari_catch_success","safari_loss_chance","safari_catch_model","safari_component_estimates"];
+  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
   downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
 }
@@ -1312,8 +1386,11 @@ const SCORING_FIELDS = [
   ["uniqueBonus","Unique-line bonus","8"],
   ["secretBonus","Secret Shiny bonus","20"],
   ["secretChance","Secret chance given shiny","0.0625"],
-  ["safariBonus","Safari catch bonus","10"],
-  ["safariCatchChance","Safari catch success","1.0"]
+  ["safariBonus","Safari catch bonus","10"]
+];
+const SAFARI_CATCH_FIELDS = [
+  ["safariUnknownCatchChance","Unknown / unmatched Safari success","0.52"],
+  ["safariCatchChance","Global Safari catch success","1.0"]
 ];
 const ROTATIONAL_FIELDS = [
   ["johtoSafariRotationalTier", "Johto Safari rotational (10%)"],
@@ -1335,10 +1412,18 @@ function renderSettings() {
   $("#clearCatches").classList.toggle("hidden", Array.isArray(remote.catches));
   $("#remoteSettingsNotice").classList.add("hidden");
   $("#backupPreviewCard").classList.toggle("hidden", !previewMode);
-  $("#scoringSettings").innerHTML = SCORING_FIELDS.map(([key,label,step]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><input class="settings-input" data-setting="${key}" type="number" step="${step.includes('.') ? '0.0001' : '1'}" value="${effective[key]}" ${remoteOverride ? "disabled" : ""}></div>`).join("")
+  const safariModel = Number(effective.safariCatchModel) === 0 ? 0 : 1;
+  const numericField = ([key,label,step], extraDisabled = false) => {
+    const chance = key.toLowerCase().includes("chance");
+    return `<div class="setting-row"><label>${escapeHtml(label)}</label><input class="settings-input" data-setting="${key}" type="number" ${chance ? 'min="0" max="1"' : ""} step="${step.includes('.') ? '0.0001' : '1'}" value="${effective[key]}" ${remoteOverride || extraDisabled ? "disabled" : ""}></div>`;
+  };
+  $("#scoringSettings").innerHTML = SCORING_FIELDS.map(field => numericField(field)).join("")
+    + `<div class="setting-row"><label>Safari catch model</label><select class="settings-input" data-setting-select="safariCatchModel" ${remoteOverride ? "disabled" : ""}><option value="1" ${safariModel === 1 ? "selected" : ""}>Species estimates + fallback</option><option value="0" ${safariModel === 0 ? "selected" : ""}>Global override</option></select><small>Species estimates use community balls-only odds where matched.</small></div>`
+    + SAFARI_CATCH_FIELDS.map(field => numericField(field, field[0] === "safariCatchChance" ? safariModel === 1 : safariModel === 0)).join("")
     + ROTATIONAL_FIELDS.map(([key,label]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><select class="settings-input" data-rotational-setting="${key}">${rotationalTierOptions(key, baseEffective[key])}</select></div>`).join("");
   $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(method)}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
-  $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); }));
+  $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); renderSettings(); }));
+  $$('[data-setting-select]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.settingSelect] = Number(input.value); saveState(); renderRankings(); renderSettings(); }));
   $$('[data-rotational-setting]').forEach(input => input.addEventListener("change", () => {
     const key = input.dataset.rotationalSetting;
     state.rotationalOverrides ||= {};
@@ -1466,7 +1551,7 @@ function bindEvents() {
       const parsed = JSON.parse(await file.text());
       const rosterById = new Map(PACKAGED_ROSTER.map(p => [p.id, p]));
       state = {
-        version: 7,
+        version: 8,
         settings: deepMergeSettings(parsed.settings),
         rotationalOverrides: parsed.rotationalOverrides && typeof parsed.rotationalOverrides === "object" ? { ...parsed.rotationalOverrides } : {},
         players: (() => {

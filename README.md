@@ -1,4 +1,4 @@
-# WARtool v0.8.7
+# WARtool v0.8.8
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -59,6 +59,14 @@ Both rotational slots are unscored by default. Set a Tier 0–7 estimate in the
 Settings tab. A published Settings sheet can provide the team default, while
 each visitor may keep a local browser override for the rotation they currently
 see.
+
+## Safari capture estimates
+
+The default Safari model weights each species by a bundled community
+balls-only capture estimate where Johto Safari or Great Marsh data can be
+matched. Unknown rotationals, unmatched species, Kanto Safari and Hoenn Safari
+use the editable 52% success fallback. Settings may instead select a single
+global catch-success override for every Safari species.
 
 ## Validation and build
 

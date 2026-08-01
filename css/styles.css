@@ -666,6 +666,7 @@ html[data-theme="dark"] .inline-form input::placeholder { color: #aebdb3; opacit
 .safety-badge.warning { background:#ffe2a8; color:#4b3210; }
 .safety-badge.slowdown { background:#dceaff; color:#17324f; }
 .safety-badge.coverage { background:#e4ddff; color:#31205c; }
+.safety-badge.safari-capture { background:#d7f4df; color:#154b2b; }
 .safety-badge img,.poke-slow img { width:15px; height:15px; image-rendering:pixelated; }
 .poke-chip { position:relative; }
 .poke-warning,.poke-slow {
@@ -694,6 +695,7 @@ html[data-theme="dark"] .poke-warning { background:#4a3715; color:#ffe4a6; borde
 html[data-theme="dark"] .safety-badge.slowdown,
 html[data-theme="dark"] .poke-slow { background:#17324f; color:#dceaff; border-color:#9fc6ee; }
 html[data-theme="dark"] .safety-badge.coverage { background:#30264f; color:#e5dcff; border-color:#b9a7ff; }
+html[data-theme="dark"] .safety-badge.safari-capture { background:#173726; color:#bfe8cb; border-color:#6fbd89; }
 html[data-theme="dark"] .safety-row { background:#3b3018; color:#fff1c8; }
 html[data-theme="dark"] .safety-row.critical { background:#401b1b; color:#ffdada; }
 html[data-theme="dark"] .safety-row.slowdown { background:#17324f; color:#dceaff; }
