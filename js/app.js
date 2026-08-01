@@ -9,6 +9,8 @@ const PACKAGED_ROSTER = window.WAR_ROSTER || [];
 const PACKAGED_PREVIEW_CATCHES = window.WAR_PREVIEW_CATCHES || [];
 const LIVE_STATE_URL = "data/live/state.json";
 const STATIC_STATE_REFRESH_MS = 60_000;
+const TIER_POINTS = Object.freeze({0:50, 1:45, 2:40, 3:30, 4:15, 5:10, 6:5, 7:3});
+const ROTATIONAL_SETTING_KEYS = Object.freeze(["johtoSafariRotationalTier", "greatMarshRotationalTier"]);
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -23,6 +25,8 @@ const DEFAULT_SETTINGS = {
   secretChance: 1 / 16,
   safariBonus: 10,
   safariCatchChance: 1,
+  johtoSafariRotationalTier: -1,
+  greatMarshRotationalTier: -1,
   methodSpeeds: {
     "5x Horde": 1200,
     "5x Horde (Slowed)": 1000,
@@ -46,6 +50,7 @@ const DEFAULT_SETTINGS = {
 const DEFAULT_STATE = {
   version: 7,
   settings: structuredClone(DEFAULT_SETTINGS),
+  rotationalOverrides: {},
   players: structuredClone(PACKAGED_ROSTER),
   selectedTeamId: PACKAGED_ROSTER[0]?.teamId || "",
   catches: structuredClone(PACKAGED_PREVIEW_CATCHES),
@@ -187,6 +192,7 @@ function loadState() {
     return {
       version: 7,
       settings: deepMergeSettings(parsed.settings),
+      rotationalOverrides: parsed.rotationalOverrides && typeof parsed.rotationalOverrides === "object" ? { ...parsed.rotationalOverrides } : {},
       players,
       selectedTeamId: parsed.selectedTeamId || players[0]?.teamId || DEFAULT_STATE.selectedTeamId,
       catches,
@@ -218,7 +224,7 @@ function packagedOrLocalConfig() {
     refreshSeconds: Number(state.liveConfig.refreshSeconds ?? PACKAGED_LIVE_CONFIG.refreshSeconds ?? 60)
   };
 }
-function getEffectiveSettings() {
+function getBaseEffectiveSettings() {
   const local = deepMergeSettings(state.settings);
   if (!remote.settings) return local;
   return deepMergeSettings({
@@ -226,6 +232,16 @@ function getEffectiveSettings() {
     ...remote.settings,
     methodSpeeds: { ...local.methodSpeeds, ...(remote.settings.methodSpeeds || {}) }
   });
+}
+function getEffectiveSettings() {
+  const effective = getBaseEffectiveSettings();
+  for (const key of ROTATIONAL_SETTING_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(state.rotationalOverrides || {}, key)) {
+      const value = Number(state.rotationalOverrides[key]);
+      if (Number.isInteger(value) && value >= -1 && value <= 7) effective[key] = value;
+    }
+  }
+  return effective;
 }
 function currentRoster() {
   const source = Array.isArray(remote.roster) && remote.roster.length ? remote.roster : state.players;
@@ -328,17 +344,34 @@ function getCatchContext(teamId = selectedTeamId()) {
   }
   return { teamLines, playerLines, scores, playerTotals, teamTotal };
 }
+function safariRotationalTier(group, settings) {
+  const key = group.safariPool?.settingKey;
+  const value = Number(key ? settings[key] : -1);
+  return Number.isInteger(value) && value >= 0 && value <= 7 ? value : -1;
+}
+function safariRotationalLabel(group, settings) {
+  const tier = safariRotationalTier(group, settings);
+  return tier >= 0 ? `T${tier} rotational` : "rotational unscored";
+}
 function scoreGroup(group, mode, playerId, context = getCatchContext()) {
   const settings = getEffectiveSettings();
   const selectedPlayerLines = context.playerLines.get(playerId) || new Set();
+  const rotationalTier = safariRotationalTier(group, settings);
+  const rotationalBasePoints = rotationalTier >= 0 ? TIER_POINTS[rotationalTier] : 0;
   let weighted = 0;
   let missingShare = 0;
   const detail = group.components.map(c => {
     const unknown = Boolean(c.unknown || Number(c.pokemonId) <= 0);
+    const rotationalEstimated = unknown && rotationalTier >= 0;
     const missingTeam = !unknown && !context.teamLines.has(c.line);
     const duplicatePlayer = !unknown && selectedPlayerLines.has(c.line);
     let score = unknown ? 0 : c.points;
-    if (!unknown) {
+    if (rotationalEstimated) {
+      // Tier-only input cannot identify the actual evolution line. Live modes therefore use base tier value only.
+      if (mode === "fresh") score = rotationalBasePoints + settings.uniqueBonus;
+      else if (mode === "duplicate") score = 1;
+      else score = rotationalBasePoints;
+    } else if (!unknown) {
       if (mode === "fresh") score = c.points + settings.uniqueBonus;
       else if (mode === "base") score = c.points;
       else if (mode === "team") score = c.points + (missingTeam ? settings.uniqueBonus : 0);
@@ -347,7 +380,7 @@ function scoreGroup(group, mode, playerId, context = getCatchContext()) {
     }
     weighted += c.share * score;
     if (missingTeam) missingShare += c.share;
-    return { ...c, score, missingTeam, duplicatePlayer, unknown };
+    return { ...c, score, missingTeam, duplicatePlayer, unknown, rotationalEstimated, rotationalTier };
   });
   const secretEV = eligibleSecret(group.method) ? settings.secretBonus * settings.secretChance : 0;
   const safariEV = group.safari ? settings.safariBonus : 0;
@@ -356,7 +389,7 @@ function scoreGroup(group, mode, playerId, context = getCatchContext()) {
   const denominator = shinyDenominatorForMethod(group.method, settings);
   const catchMultiplier = group.safari ? settings.safariCatchChance : 1;
   const pointsPerHour = encountersPerHour / denominator * average * catchMultiplier;
-  return { average, encountersPerHour, denominator, catchMultiplier, pointsPerHour, detail, missingShare, secretEV, safariEV, settings };
+  return { average, encountersPerHour, denominator, catchMultiplier, pointsPerHour, detail, missingShare, secretEV, safariEV, settings, rotationalTier, rotationalBasePoints };
 }
 
 function parseCsv(text) {
@@ -479,15 +512,18 @@ function parseRemoteCatches(text, forcedTeam = null) {
 function parseRemoteSettings(text) {
   const settings = { methodSpeeds: {} };
   const errors = [];
-  const known = new Set(["baseShinyDenominator","eventWildBoost","uniqueBonus","secretBonus","secretChance","safariBonus","safariCatchChance"]);
+  const known = new Set(["baseShinyDenominator","eventWildBoost","uniqueBonus","secretBonus","secretChance","safariBonus","safariCatchChance","johtoSafariRotationalTier","greatMarshRotationalTier"]);
   for (const row of csvObjects(text)) {
     const rawKey = String(firstField(row, ["Setting", "Key", "Name"])).trim();
     const value = numericValue(firstField(row, ["Value", "Number"]));
     if (!rawKey || value === null) continue;
     if (rawKey.toLowerCase().startsWith("method.")) {
       settings.methodSpeeds[rawKey.slice(7).trim()] = value;
-    } else if (known.has(rawKey)) settings[rawKey] = value;
-    else errors.push(`Settings row ${row._row}: unknown key “${rawKey}”.`);
+    } else if (known.has(rawKey)) {
+      if (["johtoSafariRotationalTier","greatMarshRotationalTier"].includes(rawKey) && (!Number.isInteger(value) || value < -1 || value > 7)) {
+        errors.push(`Settings row ${row._row}: ${rawKey} must be an integer from -1 to 7.`);
+      } else settings[rawKey] = value;
+    } else errors.push(`Settings row ${row._row}: unknown key “${rawKey}”.`);
   }
   if (!Object.keys(settings.methodSpeeds).length) delete settings.methodSpeeds;
   return { settings, errors };
@@ -902,7 +938,7 @@ function componentSprite(component) {
   return component.unknown ? '<span class="unknown-sprite">?</span>' : `<img src="${sprite(component.pokemonId)}" alt="">`;
 }
 function compositionHtml(detail, max = 3) {
-  return `<div class="composition-icons">${detail.slice(0,max).map(c => `<span class="poke-chip ${c.unknown ? "unknown" : ""}" title="${escapeHtml(c.pokemon)} · ${formatPercent(c.share)}${c.unknown ? " · points unknown" : ` · Tier ${c.tier}`} ">${pokemonSafetyMarkers(c)}${componentSprite(c)}<span>${escapeHtml(c.pokemon)} ${formatPercent(c.share,0)}</span></span>`).join("")}${detail.length > max ? `<span class="method-pill">+${detail.length-max}</span>` : ""}</div>`;
+  return `<div class="composition-icons">${detail.slice(0,max).map(c => `<span class="poke-chip ${c.unknown ? "unknown" : ""}" title="${escapeHtml(c.pokemon)} · ${formatPercent(c.share)}${c.rotationalEstimated ? ` · Tier ${c.rotationalTier} estimate` : c.unknown ? " · unscored by default" : ` · Tier ${c.tier}`} ">${pokemonSafetyMarkers(c)}${componentSprite(c)}<span>${escapeHtml(c.pokemon)} ${formatPercent(c.share,0)}</span></span>`).join("")}${detail.length > max ? `<span class="method-pill">+${detail.length-max}</span>` : ""}</div>`;
 }
 function rankingCardHtml(row, index) {
   const rank = index + 1;
@@ -913,7 +949,7 @@ function rankingCardHtml(row, index) {
     <div class="hunt-title">
       <h3>${escapeHtml(present.title)}</h3>
       <div class="hunt-meta">${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)}</div>
-      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadges(row.group)}${row.group.safariPool ? `<span class="safety-badge coverage">${formatPercent(row.group.safariPool.documentedTotal,0)} documented</span>` : ""}</div>
+      <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadges(row.group)}${row.group.safariPool ? `<span class="safety-badge coverage">${formatPercent(row.group.safariPool.documentedTotal,0)} documented · ${escapeHtml(safariRotationalLabel(row.group, row.score.settings))}</span>` : ""}</div>
       ${compositionHtml(row.score.detail, 4)}${alt}
     </div>
     <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} avg pts</div></div>
@@ -1062,7 +1098,7 @@ function openSpotDialog(group, mode, playerId) {
       : group.method === "Honey Tree"
         ? "The Dex Honey Tree pool is normalized for this time of day. Encounters/hour is an editable active-run assumption."
         : group.safariPool
-          ? `${group.safariPool.note} Known species keep their unconditional shares; the unknown slot contributes 0 tier/unique points, so the result is a lower bound.`
+          ? `${group.safariPool.note} Known species keep their unconditional shares. ${score.rotationalTier >= 0 ? `The unknown slot is currently estimated as Tier ${score.rotationalTier} (${score.rotationalBasePoints} base points). Live modes cannot infer its evolution-line bonus or duplicate state from a tier alone.` : "The unknown slot is unscored until a rotational tier is selected in Settings, so the result is a lower bound."}`
         : group.lure
           ? "The complete random encounter pool, including natural hordes, is scaled to 95%, then the 5% lure-exclusive roll is added."
           : group.method.includes("Chum Bucket")
@@ -1072,8 +1108,8 @@ function openSpotDialog(group, mode, playerId) {
               : "The encounter composition already totals 100% for this method.";
   const rows = score.detail.map(c => {
     const raw = rawSourceFor(group, c);
-    const status = c.unknown ? '<span class="confidence medium">unknown rotation</span>' : c.duplicatePlayer ? '<span class="confidence low">duplicate</span>' : c.missingTeam ? '<span class="confidence high">unique open</span>' : '<span class="confidence medium">line caught</span>';
-    return `<tr><td>${componentSprite(c)}${pokemonSafetyMarkers(c)}${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td><td class="numeric">${c.unknown ? "—" : formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
+    const status = c.rotationalEstimated ? `<span class="confidence medium">T${c.rotationalTier} estimate</span>` : c.unknown ? '<span class="confidence medium">rotation unscored</span>' : c.duplicatePlayer ? '<span class="confidence low">duplicate</span>' : c.missingTeam ? '<span class="confidence high">unique open</span>' : '<span class="confidence medium">line caught</span>';
+    return `<tr><td>${componentSprite(c)}${pokemonSafetyMarkers(c)}${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td><td class="numeric">${c.unknown && !c.rotationalEstimated ? "—" : formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
   }).join("");
   const notes = group.validation.map(note => `<div class="validation-note ${note.level}">${escapeHtml(note.message)}</div>`).join("");
   const hazardRows = (group.hazards || []).map(h => `<div class="safety-row ${h.severity}"><strong>${escapeHtml(h.pokemon)} · ${escapeHtml(h.name)}</strong><span>${escapeHtml(h.levelRange ? `Lv. ${h.levelRange} · ` : "")}${escapeHtml(h.consequence)}</span><small>${escapeHtml(h.counter)}</small></div>`).join("");
@@ -1104,7 +1140,7 @@ function resetRankingFilters() {
 }
 function downloadRankingCsv() {
   const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage"];
-  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} unknown` : ""]);
+  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : ""]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
   downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
 }
@@ -1279,16 +1315,39 @@ const SCORING_FIELDS = [
   ["safariBonus","Safari catch bonus","10"],
   ["safariCatchChance","Safari catch success","1.0"]
 ];
+const ROTATIONAL_FIELDS = [
+  ["johtoSafariRotationalTier", "Johto Safari rotational (10%)"],
+  ["greatMarshRotationalTier", "Great Marsh rotational (20%)"]
+];
+function rotationalTierOptions(key, baseValue) {
+  const hasOverride = Object.prototype.hasOwnProperty.call(state.rotationalOverrides || {}, key);
+  const selected = hasOverride ? Number(state.rotationalOverrides[key]) : "default";
+  const baseTier = Number(baseValue);
+  const baseLabel = Number.isInteger(baseTier) && baseTier >= 0 && baseTier <= 7 ? `T${baseTier}` : "unscored";
+  const options = [["default", `Use team/default (${baseLabel})`], [-1,"Unscored / unknown"], ...Object.entries(TIER_POINTS).map(([tier, points]) => [Number(tier), `Tier ${tier} · ${points} pts`])];
+  return options.map(([value,label]) => `<option value="${value}" ${String(selected) === String(value) ? "selected" : ""}>${escapeHtml(label)}</option>`).join("");
+}
 function renderSettings() {
   const effective = getEffectiveSettings();
+  const baseEffective = getBaseEffectiveSettings();
   const remoteOverride = Boolean(remote.settings);
   const previewMode = previewToolsEnabled() && !remoteOverride;
   $("#clearCatches").classList.toggle("hidden", Array.isArray(remote.catches));
   $("#remoteSettingsNotice").classList.add("hidden");
   $("#backupPreviewCard").classList.toggle("hidden", !previewMode);
-  $("#scoringSettings").innerHTML = SCORING_FIELDS.map(([key,label,step]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><input class="settings-input" data-setting="${key}" type="number" step="${step.includes('.') ? '0.0001' : '1'}" value="${effective[key]}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
+  $("#scoringSettings").innerHTML = SCORING_FIELDS.map(([key,label,step]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><input class="settings-input" data-setting="${key}" type="number" step="${step.includes('.') ? '0.0001' : '1'}" value="${effective[key]}" ${remoteOverride ? "disabled" : ""}></div>`).join("")
+    + ROTATIONAL_FIELDS.map(([key,label]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><select class="settings-input" data-rotational-setting="${key}">${rotationalTierOptions(key, baseEffective[key])}</select></div>`).join("");
   $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(method)}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
   $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); }));
+  $$('[data-rotational-setting]').forEach(input => input.addEventListener("change", () => {
+    const key = input.dataset.rotationalSetting;
+    state.rotationalOverrides ||= {};
+    if (input.value === "default") delete state.rotationalOverrides[key];
+    else state.rotationalOverrides[key] = Number(input.value);
+    saveState();
+    renderRankings();
+    renderSettings();
+  }));
   $$('[data-method]').forEach(input => input.addEventListener("change", () => { state.settings.methodSpeeds[input.dataset.method] = Number(input.value); saveState(); renderRankings(); }));
   const cfg = packagedOrLocalConfig();
   $("#sheetTeam1Url").value = state.liveConfig.team1CatchesCsvUrl || PACKAGED_LIVE_CONFIG.team1CatchesCsvUrl || "";
@@ -1311,6 +1370,7 @@ function renderSettings() {
 function resetSettings() {
   if (!confirm("Reset every local scoring and encounter-speed value?")) return;
   state.settings = structuredClone(DEFAULT_SETTINGS);
+  state.rotationalOverrides = {};
   saveState("Settings reset");
   renderAll();
 }
@@ -1408,6 +1468,7 @@ function bindEvents() {
       state = {
         version: 7,
         settings: deepMergeSettings(parsed.settings),
+        rotationalOverrides: parsed.rotationalOverrides && typeof parsed.rotationalOverrides === "object" ? { ...parsed.rotationalOverrides } : {},
         players: (() => {
           const map = new Map(PACKAGED_ROSTER.map(player => [player.id, { ...player }]));
           for (const player of Array.isArray(parsed.players) ? parsed.players : []) map.set(player.id || normalize(player.name), { ...map.get(player.id || normalize(player.name)), ...player });

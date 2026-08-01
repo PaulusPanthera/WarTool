@@ -55,6 +55,8 @@ KNOWN_SETTINGS = {
     "secretChance",
     "safariBonus",
     "safariCatchChance",
+    "johtoSafariRotationalTier",
+    "greatMarshRotationalTier",
 }
 
 
@@ -374,6 +376,12 @@ def import_settings_sheet(text: str, label: str) -> SettingsResult:
                 continue
             result.settings["methodSpeeds"][method] = value
         elif key in KNOWN_SETTINGS:
+            if key in {"johtoSafariRotationalTier", "greatMarshRotationalTier"}:
+                if not float(value).is_integer() or int(value) < -1 or int(value) > 7:
+                    result.rejected += 1
+                    result.warnings.append(f"{label} row {row_number}: {key} must be an integer from -1 to 7")
+                    continue
+                value = int(value)
             result.settings[key] = value
         else:
             result.rejected += 1

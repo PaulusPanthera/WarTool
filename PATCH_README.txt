@@ -1,6 +1,16 @@
-WARtool v0.8.5 update patch
+WARtool v0.8.7 patch
 
-Copy everything in this ZIP into your connected WarTool repository folder and replace matching files.
-Then commit and push with GitHub Desktop.
+Copy everything inside this ZIP into the existing connected WarTool repository
+folder and replace matching files.
 
-Suggested commit: Update encounter data from dump(8) v0.8.5
+Suggested commit:
+Fix multi-battle warnings and Safari rotations v0.8.7
+
+After pushing, add these optional rows to the currently published Settings tab
+if you want team-wide defaults:
+
+johtoSafariRotationalTier       -1
+greatMarshRotationalTier       -1
+
+Use -1 for unscored or 0–7 for the active rotational tier. Visitors can also
+select a local browser override in WARtool Settings.

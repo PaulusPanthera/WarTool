@@ -39,7 +39,14 @@ secretBonus
 secretChance
 safariBonus
 safariCatchChance
+johtoSafariRotationalTier
+greatMarshRotationalTier
 ```
+
+The Safari rotational tier settings accept `-1` for unscored or an integer from
+`0` through `7`. They provide the team/default estimate for the undocumented
+Johto 10% and Great Marsh 20% encounter slots. Each browser can override these
+two values locally from WARtool's Settings tab.
 
 Encounter speeds use the prefix `method.`, for example:
 

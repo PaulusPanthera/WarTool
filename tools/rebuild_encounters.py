@@ -562,6 +562,8 @@ def main() -> int:
     collapsed = collapse_location_type_time(raw_groups)
     base_groups = merge_alternative_locations(collapsed)
     special_groups = build_special_groups(base_groups, monsters, pokemon_by_id)
+    # Re-evaluate safety after special methods are created so Lure fishing doubles receive redirection warnings too.
+    special_groups = add_safety(special_groups, monsters)
     groups = base_groups + special_groups
     groups.sort(key=lambda group: (
         group["week"], group["season"], group["method"],
@@ -599,15 +601,15 @@ def main() -> int:
             "lures": "Lure uses 95% of the complete random pool, including natural hordes and unknown Safari rotation slots, plus a 5% lure-exclusive roll.",
             "natural_hordes": "Ordinary walking, surfing and Safari tables include the natural 3×/5× horde roll and weight shares by individual Pokémon shown.",
             "special_tables": "Numeric encounter groups below 94% total are flagged incomplete and sorted after complete groups.",
-            "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. Unknown slots score zero, making points/hour a lower bound.",
-            "safety": "Wild moves are reconstructed from the last four level-up moves at each encounter level. Safari suppresses battle hazards; horde redirection and normal-slot start-delay abilities are flagged separately.",
+            "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. The slot is unscored by default and can be assigned a tier in Settings.",
+            "safety": "Wild moves are reconstructed from the last four level-up moves at each encounter level. Redirection is flagged for hordes, natural hordes, Dark Grass doubles and Lure doubles. Safari suppresses battle hazards and encounter-start ability delays.",
             "not_ranked": "Alpha schedules, legendary/mythical encounters, other unknown-rate phenomena/special encounters, eggs and Game Corner are not ranked.",
             "zorua_assumption": "Until a confirmed rate is exposed, Lostlorn Forest Zorua is modeled as 5% of the conditional 3× horde pool and the disclosed species share the remaining 95%.",
             "chum": "Chum keeps the fishing species table; additional encounters are represented through editable method speed.",
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
         },
-        "siteVersion": "0.8.6",
+        "siteVersion": "0.8.7",
         "generatedAt": "2026-08-01",
         "encounterSource": "PokeMMO moddable resources dump(8) uploaded 2026-08-01",
         "encounterDumpSha256": dump_hash,

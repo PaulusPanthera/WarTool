@@ -177,7 +177,7 @@ def main() -> int:
         fail(errors, "Dark-mode contrast release rules are missing.")
     if "v0.7.1 dark-mode readability hotfix" not in css_text:
         fail(errors, "Dark-mode readability hotfix rules are missing.")
-    for marker in ("Redirection risk", "Start delay", "safari_coverage", "safety_warnings", "slowdown_abilities"):
+    for marker in ("Redirection risk", "Start delay", "safari_coverage", "safety_warnings", "slowdown_abilities", "johtoSafariRotationalTier", "greatMarshRotationalTier", "rotationalTierOptions"):
         if marker not in app_text:
             fail(errors, f"Safety/slowdown UI marker missing from app.js: {marker}")
     if "encounter-slowdown.png" not in app_text:
@@ -199,8 +199,8 @@ def main() -> int:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.6":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.6'.")
+    if meta.get("siteVersion") != "0.8.7":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.7'.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -330,20 +330,36 @@ def main() -> int:
     slowdown_groups = [group for group in groups if group.get("slowdowns")]
     natural_horde_groups = [group for group in groups if group.get("containsNaturalHordes")]
     safari_hazard_groups = [group for group in groups if group.get("safari") and group.get("hazards")]
-    if len(hazard_groups) != 7830:
-        fail(errors, f"Expected 7,830 safety-warning groups, found {len(hazard_groups)}.")
-    if len(critical_hazard_groups) != 2869:
-        fail(errors, f"Expected 2,869 critical-warning groups, found {len(critical_hazard_groups)}.")
-    if len(rage_powder_groups) != 22:
-        fail(errors, f"Expected 22 Rage Powder horde-warning groups, found {len(rage_powder_groups)}.")
-    if any("Horde" not in group.get("method", "") for group in rage_powder_groups):
-        fail(errors, "Rage Powder warnings must be limited to horde methods.")
+    follow_me_groups = [
+        group for group in groups
+        if any(hazard.get("name") == "Follow Me" for hazard in group.get("hazards", []))
+    ]
+    if len(hazard_groups) != 7832:
+        fail(errors, f"Expected 7,832 safety-warning groups, found {len(hazard_groups)}.")
+    if len(critical_hazard_groups) != 2914:
+        fail(errors, f"Expected 2,914 critical-warning groups, found {len(critical_hazard_groups)}.")
+    if len(rage_powder_groups) != 99:
+        fail(errors, f"Expected 99 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
+    rage_methods = Counter(group.get("method") for group in rage_powder_groups)
+    expected_rage_methods = Counter({"Lure Singles": 50, "Singles": 27, "5x Horde": 11, "5x Horde (Slowed)": 11})
+    if rage_methods != expected_rage_methods:
+        fail(errors, f"Rage Powder method coverage changed unexpectedly: {dict(rage_methods)}")
+    invalid_single_redirection = [
+        group for group in rage_powder_groups + follow_me_groups
+        if group.get("method") == "Singles"
+        and not group.get("containsNaturalHordes")
+        and not any("Dark Grass" in location.get("encounterTypes", []) for location in group.get("locations", []))
+    ]
+    if invalid_single_redirection:
+        fail(errors, f"Redirection warnings leaked into {len(invalid_single_redirection)} true single-only groups.")
+    if len(follow_me_groups) != 36 or any(group.get("method") != "Lure Singles" for group in follow_me_groups):
+        fail(errors, f"Expected 36 Follow Me Lure-double warning groups, found {len(follow_me_groups)}.")
     if safari_hazard_groups:
         fail(errors, f"Safari methods must not contain battle hazards; found {len(safari_hazard_groups)} groups.")
-    if len(slowdown_groups) != 6976:
-        fail(errors, f"Expected 6,976 start-delay groups, found {len(slowdown_groups)}.")
-    if not any(group.get("safari") and group.get("slowdowns") for group in groups):
-        fail(errors, "Safari start-delay indicators disappeared; only battle hazards should be suppressed there.")
+    if len(slowdown_groups) != 6765:
+        fail(errors, f"Expected 6,765 start-delay groups, found {len(slowdown_groups)}.")
+    if any(group.get("safari") and group.get("slowdowns") for group in groups):
+        fail(errors, "Safari methods must not contain encounter-start ability slowdown indicators.")
     if not any(
         any(item.get("pokemonId") == 58 and "Intimidate" in item.get("abilities", []) for item in group.get("slowdowns", []))
         for group in groups
@@ -374,6 +390,18 @@ def main() -> int:
         expected = 0.19 if is_marsh and group.get("lure") else 0.20 if is_marsh else 0.095 if group.get("lure") else 0.10
         if not math.isclose(unknown_share, expected, rel_tol=0, abs_tol=1e-9):
             fail(errors, f"Safari unknown rotational share is {unknown_share:.6f}, expected {expected:.3f}, in group {group.get('id')}.")
+        pool = group.get("safariPool") or {}
+        expected_key = "greatMarshRotationalTier" if is_marsh else "johtoSafariRotationalTier"
+        if pool.get("settingKey") != expected_key:
+            fail(errors, f"Safari group {group.get('id')} uses rotational setting {pool.get('settingKey')!r}, expected {expected_key!r}.")
+
+    importer_text = (ROOT / "tools/import_google_sheet.py").read_text(encoding="utf-8")
+    settings_template = (ROOT / "tools/SETTINGS_SHEET_TEMPLATE.csv").read_text(encoding="utf-8-sig")
+    for setting_key in ("johtoSafariRotationalTier", "greatMarshRotationalTier"):
+        if setting_key not in importer_text:
+            fail(errors, f"Google Sheet importer does not recognize {setting_key}.")
+        if f"{setting_key},-1" not in settings_template:
+            fail(errors, f"Settings CSV template is missing {setting_key} default -1.")
 
     # Roster separation.
     team_counts = Counter(item.get("teamName") for item in roster if item.get("active", True))

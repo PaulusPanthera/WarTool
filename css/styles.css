@@ -204,11 +204,11 @@ img { max-width: 100%; }
 .compact-filters { grid-template-columns: minmax(260px,1fr) 180px 150px; margin-bottom: 20px; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field span { color: var(--muted); font-size: .68rem; font-weight: 900; letter-spacing: .07em; text-transform: uppercase; }
-.field input, .field select, .setting-row input {
+.field input, .field select, .setting-row input, .setting-row select {
   width: 100%; min-height: 43px; padding: 9px 11px; color: var(--ink); background: var(--cream);
   border: 3px solid var(--ink); outline: none;
 }
-.field input:focus, .field select:focus, .setting-row input:focus { background: #fff; box-shadow: 3px 3px 0 var(--yellow); }
+.field input:focus, .field select:focus, .setting-row input:focus, .setting-row select:focus { background: #fff; box-shadow: 3px 3px 0 var(--yellow); }
 .field-wide { grid-column: span 2; }
 .field.compact { min-width: 190px; }
 .filter-toggles { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -443,7 +443,7 @@ html[data-theme="dark"] .topbar { box-shadow: 0 5px 0 rgba(0,0,0,.38); }
 html[data-theme="dark"] .team-strip { background: rgba(27,38,33,.96); }
 html[data-theme="dark"] .page-hero h1, html[data-theme="dark"] .page-title { text-shadow: 3px 3px 0 rgba(0,0,0,.62); }
 html[data-theme="dark"] .page-hero p, html[data-theme="dark"] .page-intro p { color: #bdcdc2; }
-html[data-theme="dark"] .field input, html[data-theme="dark"] .field select, html[data-theme="dark"] .setting-row input, html[data-theme="dark"] .inline-form input { background: #121c18; color: var(--ink); }
+html[data-theme="dark"] .field input, html[data-theme="dark"] .field select, html[data-theme="dark"] .setting-row input, html[data-theme="dark"] .setting-row select, html[data-theme="dark"] .inline-form input { background: #121c18; color: var(--ink); }
 html[data-theme="dark"] .console-screen { background: #42604b; }
 html[data-theme="dark"] .best-hunt { color: #1e3026; }
 html[data-theme="dark"] .tier-label { color: #181926; }
@@ -467,7 +467,8 @@ html[data-theme="dark"] .dialog-section h4,
 html[data-theme="dark"] .save-status.flash { color: #8fd6ae; }
 html[data-theme="dark"] .field input:focus,
 html[data-theme="dark"] .field select:focus,
-html[data-theme="dark"] .setting-row input:focus { background: #314238; color: #f4fbf6; }
+html[data-theme="dark"] .setting-row input:focus,
+html[data-theme="dark"] .setting-row select:focus { background: #314238; color: #f4fbf6; }
 html[data-theme="dark"] .main-nav .tab:hover,
 html[data-theme="dark"] .main-nav .tab.active,
 html[data-theme="dark"] .team-tab.active,

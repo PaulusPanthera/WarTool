@@ -43,8 +43,8 @@ HAZARD_MOVES = {
     "Belly Drum": ("hp-loss", "warning", "The user loses half of its maximum HP when the move succeeds.", "Taunt or Imprison prevents it."),
 }
 REDIRECTION_MOVES = {
-    "Rage Powder": ("redirection", "critical", "In a horde it can redirect a targeted attack onto itself, potentially hitting the shiny.", "Do not use targeted cleanup attacks until the redirect user is controlled; Taunt or spread-safe play helps."),
-    "Follow Me": ("redirection", "critical", "In a horde it can redirect a targeted attack onto itself, potentially hitting the shiny.", "Do not use targeted cleanup attacks until the redirect user is controlled; Taunt or spread-safe play helps."),
+    "Rage Powder": ("redirection", "critical"),
+    "Follow Me": ("redirection", "critical"),
 }
 HAZARD_ABILITIES = {
     "Dry Skin": ("weather", "warning", "The Pokémon loses HP each turn in harsh sunlight.", "Avoid harsh sunlight."),
@@ -124,23 +124,50 @@ def safety_maps(monsters: list[dict[str, Any]]) -> tuple[dict[int, list[dict[str
     return moves, slow, abilities
 
 
+def redirection_context(method: str, encounter_types: list[str], sources: list[dict[str, Any]]) -> tuple[str, str] | None:
+    if "Horde" in method:
+        return (
+            "In this horde it can redirect a targeted cleanup attack onto itself, potentially causing the shiny to be hit.",
+            "Control the redirect user first, use a Grass-type/Overcoat attacker for Rage Powder, or use a safe priority strategy.",
+        )
+    if "Lure" in method:
+        return (
+            "Only dangerous when the Lure opens a wild double battle; it can redirect a targeted cleanup attack onto itself. It is harmless in a true single battle.",
+            "Treat the encounter as a double until confirmed otherwise; control the redirect user or avoid targeted cleanup attacks.",
+        )
+    if "Dark Grass" in encounter_types:
+        return (
+            "Dark Grass can open a wild double battle, where it can redirect a targeted cleanup attack onto itself. It is harmless in a true single battle.",
+            "Treat the encounter as a double until confirmed otherwise; control the redirect user or avoid targeted cleanup attacks.",
+        )
+    if any(str(source.get("label", "")).startswith("Natural ") and "horde" in str(source.get("label", "")).lower() for source in sources):
+        return (
+            "This species can appear through the natural horde roll and redirect a targeted cleanup attack onto itself. It is harmless when encountered alone.",
+            "Check whether the encounter is a horde before using targeted cleanup attacks; control the redirect user first.",
+        )
+    return None
+
+
 def hazard_rows(pid: int, pokemon: str, level_min: int, level_max: int, method: str, safari: bool,
+                encounter_types: list[str], sources: list[dict[str, Any]],
                 level_moves: dict[int, list[dict[str, Any]]], abilities: dict[int, list[str]]) -> list[dict[str, Any]]:
     if safari or pid <= 0:
         return []
+    redirect_context = redirection_context(method, encounter_types, sources)
     by_name: dict[str, set[int]] = collections.defaultdict(set)
     for level in range(max(1, level_min), max(level_min, level_max) + 1):
         for move in wild_moves_at_level(level_moves.get(pid, []), level):
-            rules = HAZARD_MOVES
-            if "Horde" in method and move in REDIRECTION_MOVES:
-                rules = REDIRECTION_MOVES
             if move == "Perish Song" and "Horde" in method:
                 continue
-            if move in rules:
+            if move in HAZARD_MOVES or (move in REDIRECTION_MOVES and redirect_context):
                 by_name[move].add(level)
     rows: list[dict[str, Any]] = []
     for name, levels in by_name.items():
-        kind, severity, consequence, counter = (REDIRECTION_MOVES if name in REDIRECTION_MOVES else HAZARD_MOVES)[name]
+        if name in REDIRECTION_MOVES:
+            kind, severity = REDIRECTION_MOVES[name]
+            consequence, counter = redirect_context or ("", "")
+        else:
+            kind, severity, consequence, counter = HAZARD_MOVES[name]
         rows.append({"pokemonId": pid, "pokemon": pokemon, "name": name, "kind": kind, "severity": severity,
                      "levelRange": compact_ranges(levels), "consequence": consequence, "counter": counter})
     for ability in abilities.get(pid, []):
@@ -226,11 +253,13 @@ def transform_random_tables(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         safari_pool = None
         if safari and loc["region"] == "Johto" and "Grass" in loc["encounterTypes"] and event_total < 0.999:
             unknown_event = max(0.0, 1.0 - event_total)
-            safari_pool = {"documentedTotal": event_total, "unknownShare": unknown_event, "label": "Base grass pool",
+            safari_pool = {"key": "johto", "settingKey": "johtoSafariRotationalTier",
+                           "documentedTotal": event_total, "unknownShare": unknown_event, "label": "Base grass pool",
                            "note": "The dump documents 90%; block/rotation encounters occupy the remaining 10%."}
         elif safari and loc["region"] == "Sinnoh" and "Grass" in loc["encounterTypes"] and event_total < 0.999:
             unknown_event = max(0.0, 1.0 - event_total)
-            safari_pool = {"documentedTotal": event_total, "unknownShare": unknown_event, "label": "Base grass pool",
+            safari_pool = {"key": "greatMarsh", "settingKey": "greatMarshRotationalTier",
+                           "documentedTotal": event_total, "unknownShare": unknown_event, "label": "Base grass pool",
                            "note": "The dump documents 80%; daily rotations occupy the remaining 20%."}
         components, shown_total = _combine_components(sources, unknown_event)
         row = copy.deepcopy(normal)
@@ -252,7 +281,7 @@ def transform_random_tables(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row["confidence"] = "medium"
             row["validation"] = [n for n in row.get("validation", []) if n.get("code") != "incomplete-table"]
             row["validation"].append({"level": "assumption", "code": "safari-rotational-coverage",
-                                      "message": safari_pool["note"] + " Unknown rotationals contribute 0 points, so this is a conservative lower bound."})
+                                      "message": safari_pool["note"] + " The rotational slot is unscored by default and can be assigned a tier in Settings."})
         keep.append(row)
 
         lure_old = lure_rows.get(key)
@@ -307,8 +336,17 @@ def add_safety(rows: list[dict[str, Any]], monsters: list[dict[str, Any]]) -> li
                 continue
             level_min = int(component.get("minLevel", 1) or 1)
             level_max = int(component.get("maxLevel", level_min) or level_min)
-            component["hazards"] = hazard_rows(pid, component["pokemon"], level_min, level_max, row["method"], safari, moves, abilities)
-            component["slowAbilities"] = slow.get(pid, [])
+            encounter_types = sorted({
+                encounter_type
+                for location in row.get("locations", [])
+                for encounter_type in location.get("encounterTypes", [])
+            })
+            component["hazards"] = hazard_rows(
+                pid, component["pokemon"], level_min, level_max, row["method"], safari,
+                encounter_types, component.get("sources", []), moves, abilities,
+            )
+            # Safari encounters do not enter the normal battle-intro sequence, so encounter-start abilities do not delay them.
+            component["slowAbilities"] = [] if safari else slow.get(pid, [])
             group_hazards.extend(copy.deepcopy(component["hazards"]))
             if component["slowAbilities"]:
                 group_slow.append({"pokemonId": pid, "pokemon": component["pokemon"], "abilities": component["slowAbilities"]})

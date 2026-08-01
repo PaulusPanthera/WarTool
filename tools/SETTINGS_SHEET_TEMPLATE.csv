@@ -6,6 +6,8 @@ secretBonus,20
 secretChance,0.0625
 safariBonus,10
 safariCatchChance,1
+johtoSafariRotationalTier,-1
+greatMarshRotationalTier,-1
 method.5x Horde,1200
 method.5x Horde (Slowed),1000
 method.3x Horde,720

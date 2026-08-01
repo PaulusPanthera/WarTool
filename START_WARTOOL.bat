@@ -1,7 +1,7 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-title WARtool v0.8.6 local server
+title WARtool v0.8.7 local server
 set PORT=8877
 
 where py >nul 2>nul
@@ -25,7 +25,7 @@ exit /b 1
 
 :python_found
 echo.
-echo Starting WARtool v0.8.6 at http://localhost:%PORT%
+echo Starting WARtool v0.8.7 at http://localhost:%PORT%
 echo Keep this window open while using the tool.
 echo Press CTRL+C to stop it.
 echo.

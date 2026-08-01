@@ -1,4 +1,4 @@
-# WARtool v0.8.6
+# WARtool v0.8.7
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -45,6 +45,20 @@ TEAM_SURPRISE_CSV_URL
 TEAM_MORE_LIKE_IT_CSV_URL
 WAR_SETTINGS_CSV_URL
 ```
+
+
+## Safari rotational estimates
+
+The undocumented Safari slots remain explicit instead of being redistributed:
+
+- Johto Safari grass: 10% rotational/block slot
+- Great Marsh grass: 20% daily-rotation slot
+- With Lure: 9.5% and 19% respectively, plus the separate 5% Lure slot
+
+Both rotational slots are unscored by default. Set a Tier 0–7 estimate in the
+Settings tab. A published Settings sheet can provide the team default, while
+each visitor may keep a local browser override for the rotation they currently
+see.
 
 ## Validation and build
 
