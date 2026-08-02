@@ -427,23 +427,7 @@ def build_special_groups(
 ) -> list[dict[str, Any]]:
     special: list[dict[str, Any]] = []
     for source in base_groups:
-        if source["method"] == "5x Horde":
-            row = copy.deepcopy(source)
-            row["method"] = "5x Horde (Slowed)"
-            row["validation"].append({
-                "level": "assumption", "code": "slowed-horde-speed",
-                "message": "Same Sweet Scent table, using the editable slower 5× horde encounters/hour assumption.",
-            })
-            special.append(row)
-        elif source["method"] == "3x Horde":
-            row = copy.deepcopy(source)
-            row["method"] = "3x Horde (Slowed)"
-            row["validation"].append({
-                "level": "assumption", "code": "slowed-horde-speed",
-                "message": "Same Sweet Scent table, using the editable slower 3× horde encounters/hour assumption.",
-            })
-            special.append(row)
-        elif source["method"] == "Fishing":
+        if source["method"] == "Fishing":
             row = copy.deepcopy(source)
             row["method"] = "Fishing + Chum Bucket"
             row["confidence"] = "medium"
@@ -566,8 +550,6 @@ def build_validation(
                 "notes": group["validation"],
             })
     method_messages = {
-        "5x Horde (Slowed)": "Same exact 5× Sweet Scent encounter tables; only encounters/hour differs.",
-        "3x Horde (Slowed)": "Same exact 3× Sweet Scent encounter tables; only encounters/hour differs.",
         "Fishing + Chum Bucket": "Rod table is unchanged; Chum is modeled through encounters/hour.",
         "Fishing + Lure": "Uses Water lure compositions with the modeled lure-exclusive slot.",
         "Fishing + Lure + Chum Bucket": "Uses Water lure compositions; Chum is modeled through encounters/hour.",
@@ -643,19 +625,19 @@ def main() -> int:
             "natural_hordes": "Ordinary walking, surfing and Safari tables include the natural 3×/5× horde roll and weight shares by individual Pokémon shown.",
             "special_tables": "Numeric encounter groups below 94% total are flagged incomplete and sorted after complete groups.",
             "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. The slot is unscored by default and can be assigned a tier in Settings. Expected points use species-specific community balls-only catch estimates for matched Johto/Great Marsh species, an editable fallback for unmatched/unknown species, or an optional global override.",
-            "safety": "Wild moves are reconstructed from the last four level-up moves at each encounter level. Redirection is flagged for hordes, natural hordes, Dark Grass doubles and Lure doubles. Safari suppresses battle hazards and encounter-start ability delays.",
+            "safety": "Wild moves are reconstructed from the last four level-up moves at each encounter level. Redirection is flagged for hordes, natural hordes, Dark Grass doubles and Lure doubles. Safari suppresses battle hazards and encounter-start ability delays. Horde cards with any start-delay ability show the standard result and a separate 100% slowed alternative inside the same hunt card; encounter share is not used to interpolate speed.",
             "not_ranked": "Alpha schedules, legendary/mythical encounters, other unknown-rate phenomena/special encounters, eggs and Game Corner are not ranked.",
             "zorua_assumption": "Until a confirmed rate is exposed, Lostlorn Forest Zorua is modeled as 5% of the conditional 3× horde pool and the disclosed species share the remaining 95%.",
             "chum": "Chum keeps the fishing species table; additional encounters are represented through editable method speed.",
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
         },
-        "siteVersion": "0.8.8",
-        "generatedAt": "2026-08-01",
+        "siteVersion": "0.8.10",
+        "generatedAt": "2026-08-02",
         "encounterSource": "PokeMMO moddable resources dump(8) uploaded 2026-08-01",
         "encounterDumpSha256": dump_hash,
         "spriteSource": "PokeMMO moddable resources sprite dump uploaded 2026-07-29",
-        "storageKey": "pokemmo-wartool-state-v8",
+        "storageKey": "pokemmo-wartool-state-v9",
     }
     META_PATH.write_text(
         "window.WAR_META=" + json.dumps(meta, ensure_ascii=False, separators=(",", ":")) + ";\n",

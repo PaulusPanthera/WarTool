@@ -11,10 +11,11 @@ const LIVE_STATE_URL = "data/live/state.json";
 const STATIC_STATE_REFRESH_MS = 60_000;
 const TIER_POINTS = Object.freeze({0:50, 1:45, 2:40, 3:30, 4:15, 5:10, 6:5, 7:3});
 const ROTATIONAL_SETTING_KEYS = Object.freeze(["johtoSafariRotationalTier", "greatMarshRotationalTier"]);
+const SLOW_BASELINE_METHOD = Object.freeze({"5x Horde":"5x Horde (Slowed)", "3x Horde":"3x Horde (Slowed)"});
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
-const STORAGE_KEY = META.storageKey || "pokemmo-wartool-state-v3";
+const STORAGE_KEY = META.storageKey || "pokemmo-wartool-state-v9";
 const OLD_STORAGE_KEYS = ["pokemmo-wartool-state-v7", "pokemmo-wartool-state-v6", "pokemmo-wartool-state-v5", "pokemmo-wartool-state-v4", "pokemmo-wartool-state-v3", "pokemmo-wartool-state-v2", "pokemmo-wartool-state-v1"];
 
 const DEFAULT_SETTINGS = {
@@ -50,7 +51,7 @@ const DEFAULT_SETTINGS = {
 };
 
 const DEFAULT_STATE = {
-  version: 8,
+  version: 9,
   settings: structuredClone(DEFAULT_SETTINGS),
   rotationalOverrides: {},
   players: structuredClone(PACKAGED_ROSTER),
@@ -192,7 +193,7 @@ function loadState() {
       ? migratedCatches
       : structuredClone(PACKAGED_PREVIEW_CATCHES);
     return {
-      version: 8,
+      version: 9,
       settings: deepMergeSettings(parsed.settings),
       rotationalOverrides: parsed.rotationalOverrides && typeof parsed.rotationalOverrides === "object" ? { ...parsed.rotationalOverrides } : {},
       players,
@@ -388,7 +389,25 @@ function safariCaptureFor(component, settings) {
 }
 function safariCaptureBadge(score) {
   if (!score || !Number.isFinite(score.captureAverage)) return "";
-  return `<span class="safety-badge safari-capture">${formatPercent(1 - score.captureAverage, 0)} loss est.</span>`;
+  const loss = Math.min(1, Math.max(0, 1 - score.captureAverage));
+  return `<span class="safety-badge safari-capture">${formatPercent(loss, 0)} loss est.</span>`;
+}
+function slowdownExposure(group) {
+  if (group.safari || !SLOW_BASELINE_METHOD[group.method]) return 0;
+  const exposure = (group.components || []).reduce((total, component) =>
+    total + ((component.slowAbilities || []).length ? Number(component.share || 0) : 0), 0);
+  return Math.min(1, Math.max(0, exposure));
+}
+function speedProfile(group, settings) {
+  const standard = Math.max(0, Number(settings.methodSpeeds[group.method] || 0));
+  const baselineKey = SLOW_BASELINE_METHOD[group.method];
+  const exposure = slowdownExposure(group);
+  if (!baselineKey || exposure <= 0) {
+    return { standard, fullDelay: standard, exposure: 0, hasRange: false, baselineKey: "" };
+  }
+  const configuredFullDelay = Math.max(0, Number(settings.methodSpeeds[baselineKey] ?? standard));
+  const fullDelay = Math.min(standard, configuredFullDelay);
+  return { standard, fullDelay, exposure, hasRange: fullDelay + 1e-9 < standard, baselineKey };
 }
 function scoreGroup(group, mode, playerId, context = getCatchContext()) {
   const settings = getEffectiveSettings();
@@ -439,13 +458,17 @@ function scoreGroup(group, mode, playerId, context = getCatchContext()) {
   });
   const potentialAverage = weightedBase + secretEV + safariEV;
   const average = group.safari ? weightedCaught : potentialAverage;
-  const encountersPerHour = Number(settings.methodSpeeds[group.method] || 0);
+  captureAverage = Math.min(1, Math.max(0, captureAverage));
+  const speed = speedProfile(group, settings);
+  const encountersPerHour = speed.standard;
   const denominator = shinyDenominatorForMethod(group.method, settings);
   const catchMultiplier = group.safari ? captureAverage : 1;
   const pointsPerHour = encountersPerHour / denominator * average;
+  const fullDelayPointsPerHour = speed.fullDelay / denominator * average;
   return {
-    average, potentialAverage, encountersPerHour, denominator, catchMultiplier,
-    captureAverage, captureLoss: group.safari ? 1 - captureAverage : 0,
+    average, potentialAverage, encountersPerHour, standardEncountersPerHour: speed.standard, fullDelayEncountersPerHour: speed.fullDelay,
+    slowdownExposure: speed.exposure, hasSlowdownRange: speed.hasRange, standardPointsPerHour: pointsPerHour, fullDelayPointsPerHour, denominator, catchMultiplier,
+    captureAverage, captureLoss: group.safari ? Math.min(1, Math.max(0, 1 - captureAverage)) : 0,
     speciesCaptureCoverage, captureMode: group.safari ? (safariUsesGlobalOverride(settings) ? "global" : "species") : "none",
     pointsPerHour, detail, missingShare, secretEV, safariEV, settings,
     rotationalTier, rotationalBasePoints,
@@ -989,6 +1012,16 @@ function safetyBadges(group) {
   const s = safetySummary(group);
   return `${s.critical ? '<span class="safety-badge critical">Self-KO risk</span>' : ''}${s.redirection ? '<span class="safety-badge redirect">Redirection risk</span>' : ''}${!s.critical && !s.redirection && s.warning ? '<span class="safety-badge warning">Self-damage</span>' : ''}${s.slow ? '<span class="safety-badge slowdown"><img src="assets/encounter-slowdown.png" alt="">Start delay</span>' : ''}`;
 }
+function rankingScoreHtml(score, best = false, isSafari = false) {
+  const cls = best ? "best-score" : "hunt-score";
+  if (!score.hasSlowdownRange) {
+    return `<div class="${cls}"><strong>${formatNumber(score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(score.encountersPerHour,0)} enc/hr · ${formatNumber(score.average,2)} ${isSafari ? "expected caught pts" : "avg pts"}</div></div>`;
+  }
+  return `<div class="${cls} score-range">
+    <div class="score-case standard"><small>Standard</small><strong>${formatNumber(score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(score.standardEncountersPerHour,0)} enc/hr</div></div>
+    <div class="score-case slowed"><small>100% slowed alternative</small><strong>${formatNumber(score.fullDelayPointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(score.fullDelayEncountersPerHour,0)} enc/hr</div></div>
+  </div>`;
+}
 function pokemonSafetyMarkers(component) {
   const hazards = component.hazards || [];
   const critical = hazards.some(h => h.severity === "critical");
@@ -1016,7 +1049,7 @@ function rankingCardHtml(row, index) {
       <div class="hunt-methods"><span class="method-pill">${escapeHtml(row.group.method)}</span><span class="availability-pill">${escapeHtml(row.group.timeLabel)}</span><span class="confidence ${row.group.confidence}">${escapeHtml(row.group.confidence)}</span>${safetyBadges(row.group)}${row.group.safari ? safariCaptureBadge(row.score) : ""}${row.group.safariPool ? `<span class="safety-badge coverage">${formatPercent(row.group.safariPool.documentedTotal,0)} documented · ${escapeHtml(safariRotationalLabel(row.group, row.score.settings))}</span>` : ""}</div>
       ${compositionHtml(row.score.detail, 4)}${alt}
     </div>
-    <div class="hunt-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><div class="hunt-subscore">${formatNumber(row.score.encountersPerHour,0)} enc/hr · ${formatNumber(row.score.average,2)} ${row.group.safari ? "expected caught pts" : "avg pts"}</div></div>
+    ${rankingScoreHtml(row.score, false, row.group.safari)}
   </article>`;
 }
 function bindRankingCards(grid, mode, playerId) {
@@ -1107,10 +1140,11 @@ function renderRankings() {
         <span class="best-method">${escapeHtml(row.group.method)}</span>
         <h2>${escapeHtml(present.title)}</h2>
         <p>${escapeHtml(present.subtitle)} · ${escapeHtml(row.group.week)} · ${escapeHtml(row.group.season)} · ${escapeHtml(row.group.timeLabel)}</p>
+        <div class="hunt-methods best-badges">${safetyBadges(row.group)}${row.group.safari ? safariCaptureBadge(row.score) : ""}</div>
         ${present.alt ? `<p class="alt-count">${escapeHtml(present.alt)}</p>` : ""}
       </div>
       <div>${compositionHtml(row.score.detail, 6)}</div>
-      <div class="best-score"><strong>${formatNumber(row.score.pointsPerHour,4)}</strong><span>points / hour</span><small>${formatNumber(row.score.average,2)} avg points / shiny</small></div>
+      ${rankingScoreHtml(row.score, true, row.group.safari)}
     </article>`;
     const bestCard = bestWrap.querySelector('.best-hunt');
     const open = () => openSpotDialog(row.group, mode, playerId);
@@ -1190,10 +1224,12 @@ function openSpotDialog(group, mode, playerId) {
     : "";
   const formula = group.safari
     ? `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} expected captured points/shiny<br><small>${escapeHtml(captureExplanation)}</small><br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`
-    : `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`;
+    : score.hasSlowdownRange
+      ? `<strong>Standard estimate</strong><br>${formatNumber(score.standardEncountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span><hr><strong>100% slowed alternative</strong><br>${formatNumber(score.fullDelayEncountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points<br><span class="calc-result">= ${formatNumber(score.fullDelayPointsPerHour,4)} points/hour</span><br><small>The slowed alternative uses the full editable slowed baseline whenever this hunt contains any start-delay ability. Encounter share is not used to interpolate the result.</small>`
+      : `${formatNumber(score.encountersPerHour,0)} encounters/hr ÷ ${Math.round(score.denominator).toLocaleString()} × ${formatNumber(score.average,2)} avg points<br><span class="calc-result">= ${formatNumber(score.pointsPerHour,4)} expected points/hour</span>`;
   $("#spotDialogContent").innerHTML = `<div class="dialog-body">
     <div class="dialog-title"><div><h3>${escapeHtml(present.title)}</h3><p>${escapeHtml(group.week)} · ${escapeHtml(group.season)} · ${escapeHtml(group.timeLabel)} · ${escapeHtml(group.method)}</p></div></div>
-    <div class="dialog-score-grid"><div class="dialog-score"><span>Points/hour</span><strong>${formatNumber(score.pointsPerHour,4)}</strong></div><div class="dialog-score"><span>${group.safari ? "Expected captured points/shiny" : "Average points/shiny"}</span><strong>${formatNumber(score.average,2)}</strong></div><div class="dialog-score"><span>${group.safari ? "Catch success estimate" : "Encounters/hour"}</span><strong>${group.safari ? formatPercent(score.captureAverage,1) : formatNumber(score.encountersPerHour,0)}</strong></div></div>
+    <div class="dialog-score-grid"><div class="dialog-score"><span>${score.hasSlowdownRange ? "Standard points/hour" : "Points/hour"}</span><strong>${formatNumber(score.pointsPerHour,4)}</strong></div><div class="dialog-score"><span>${group.safari ? "Expected captured points/shiny" : score.hasSlowdownRange ? "100% slowed points/hour" : "Average points/shiny"}</span><strong>${group.safari ? formatNumber(score.average,2) : score.hasSlowdownRange ? formatNumber(score.fullDelayPointsPerHour,4) : formatNumber(score.average,2)}</strong></div><div class="dialog-score"><span>${group.safari ? "Catch success estimate" : score.hasSlowdownRange ? "Standard / slowed speed" : "Encounters/hour"}</span><strong>${group.safari ? formatPercent(score.captureAverage,1) : score.hasSlowdownRange ? `${formatNumber(score.standardEncountersPerHour,0)} / ${formatNumber(score.fullDelayEncountersPerHour,0)}` : formatNumber(score.encountersPerHour,0)}</strong></div></div>
     <p class="muted">Scoring mode: <strong>${escapeHtml(modeLabel)}</strong>. Secret expected value if caught: ${formatNumber(score.secretEV,2)}. Safari bonus if caught: ${formatNumber(score.safariEV,2)}.${group.safari ? ` Balls-only community estimates model up to 30 Safari Balls; unmatched species and unknown rotationals use the editable fallback unless the global override is selected.` : ""}</p>
     <section class="dialog-section"><h4>Equivalent locations</h4><div class="location-list">${locations}</div></section>
     <section class="dialog-section"><h4>Encounter calculation</h4><p class="muted">${escapeHtml(methodExplanation)}</p><table class="raw-table"><thead><tr><th>Pokémon</th><th>Raw source</th><th>Final share</th>${group.safari ? "<th>Catch estimate</th>" : ""}<th>Score if caught</th><th>Live status</th></tr></thead><tbody>${rows}</tbody></table></section>
@@ -1213,8 +1249,8 @@ function resetRankingFilters() {
   renderRankings();
 }
 function downloadRankingCsv() {
-  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour","average_points","points_per_hour","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage","safari_catch_success","safari_loss_chance","safari_catch_model","safari_component_estimates"];
-  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.encountersPerHour,row.score.average,row.score.pointsPerHour,row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
+  const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour_standard","encounters_per_hour_100pct_slowed","slowdown_exposure","average_points","points_per_hour_standard","points_per_hour_100pct_slowed","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage","safari_catch_success","safari_loss_chance","safari_catch_model","safari_component_estimates"];
+  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.standardEncountersPerHour,row.score.hasSlowdownRange ? row.score.fullDelayEncountersPerHour : "",row.score.slowdownExposure,row.score.average,row.score.pointsPerHour,row.score.hasSlowdownRange ? row.score.fullDelayPointsPerHour : "",row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
   downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
 }
@@ -1421,7 +1457,11 @@ function renderSettings() {
     + `<div class="setting-row"><label>Safari catch model</label><select class="settings-input" data-setting-select="safariCatchModel" ${remoteOverride ? "disabled" : ""}><option value="1" ${safariModel === 1 ? "selected" : ""}>Species estimates + fallback</option><option value="0" ${safariModel === 0 ? "selected" : ""}>Global override</option></select><small>Species estimates use community balls-only odds where matched.</small></div>`
     + SAFARI_CATCH_FIELDS.map(field => numericField(field, field[0] === "safariCatchChance" ? safariModel === 1 : safariModel === 0)).join("")
     + ROTATIONAL_FIELDS.map(([key,label]) => `<div class="setting-row"><label>${escapeHtml(label)}</label><select class="settings-input" data-rotational-setting="${key}">${rotationalTierOptions(key, baseEffective[key])}</select></div>`).join("");
-  $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(method)}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}></div>`).join("");
+  const methodSettingLabel = method => ({
+    "5x Horde (Slowed)": "5× Horde · 100% start-delay baseline",
+    "3x Horde (Slowed)": "3× Horde · 100% start-delay baseline",
+  }[method] || method);
+  $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(methodSettingLabel(method))}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}>${SLOW_BASELINE_METHOD[method] ? "" : method.includes("(Slowed)") ? '<small>Shown as the 100% slowed alternative whenever the horde contains any start-delay ability.</small>' : ""}</div>`).join("");
   $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); renderSettings(); }));
   $$('[data-setting-select]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.settingSelect] = Number(input.value); saveState(); renderRankings(); renderSettings(); }));
   $$('[data-rotational-setting]').forEach(input => input.addEventListener("change", () => {
@@ -1551,7 +1591,7 @@ function bindEvents() {
       const parsed = JSON.parse(await file.text());
       const rosterById = new Map(PACKAGED_ROSTER.map(p => [p.id, p]));
       state = {
-        version: 8,
+        version: 9,
         settings: deepMergeSettings(parsed.settings),
         rotationalOverrides: parsed.rotationalOverrides && typeof parsed.rotationalOverrides === "object" ? { ...parsed.rotationalOverrides } : {},
         players: (() => {

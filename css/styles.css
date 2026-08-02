@@ -264,6 +264,17 @@ img { max-width: 100%; }
 .hunt-score strong { display: block; color: var(--green); font-size: 1.55rem; line-height: 1; }
 .hunt-score span { color: var(--muted); font-size: .7rem; font-weight: 900; text-transform: uppercase; }
 .hunt-subscore { margin-top: 9px; color: var(--muted); font-size: .72rem; }
+.score-range { min-width: 178px; display: grid; gap: 8px; }
+.score-case { padding: 7px 8px; border: 2px solid var(--line); background: rgba(255,255,255,.34); }
+.score-case small { display: block; margin-bottom: 4px; color: var(--muted); font-size: .58rem; font-weight: 900; letter-spacing: .04em; text-transform: uppercase; }
+.score-case .hunt-subscore { margin-top: 4px; }
+.score-case.slowed { opacity: .82; }
+.score-case.slowed strong { color: var(--blue); font-size: 1.12rem; }
+.best-score.score-range { min-width: 190px; }
+.best-score.score-range .score-case { background: rgba(255,255,255,.42); border-color: rgba(30,48,38,.42); }
+.best-score.score-range .score-case strong { font-size: 1.75rem; }
+.best-score.score-range .score-case.slowed strong { font-size: 1.25rem; }
+.best-badges { margin-bottom: 0; }
 .alt-count { color: var(--blue); font-weight: 900; }
 .composition-icons { display: flex; flex-wrap: wrap; gap: 7px; }
 .poke-chip {
@@ -529,8 +540,10 @@ html[data-theme="dark"] .site-footer { border-top-color: rgba(214,231,219,.35); 
   .best-hunt { grid-template-columns: 1fr; padding: 17px; }
   .best-rank { width: 58px; height: 58px; font-size: 1.6rem; }
   .best-hunt .composition-icons, .best-score { grid-column: 1; }
+  .best-score.score-range { grid-template-columns: 1fr 1fr; min-width: 0; text-align: left; }
   .hunt-card { grid-template-columns: 44px 1fr; }
   .hunt-score { grid-column: 2; text-align: left; }
+  .score-range { grid-template-columns: repeat(2,minmax(0,1fr)); min-width: 0; }
   .summary-ribbon { align-items: stretch; flex-direction: column; }
   .player-filter { min-width: 0; }
   .tier-row { min-height: 88px; }

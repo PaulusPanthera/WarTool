@@ -36,9 +36,7 @@ TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
 
 EXPECTED_METHOD_COUNTS = {
     "5x Horde": 1887,
-    "5x Horde (Slowed)": 1887,
     "3x Horde": 623,
-    "3x Horde (Slowed)": 623,
     "Lure Singles": 3435,
     "Singles": 4174,
     "Safari Singles": 400,
@@ -185,6 +183,11 @@ def main() -> int:
             fail(errors, f"Safety/slowdown UI marker missing from app.js: {marker}")
     if "encounter-slowdown.png" not in app_text:
         fail(errors, "Start-delay icon is not wired into the ranking UI.")
+    for marker in ("slowdownExposure", "score-range", "100% slowed alternative", "fullDelayPointsPerHour"):
+        if marker not in app_text and marker not in css_text:
+            fail(errors, f"Full-slowdown alternative marker missing: {marker}")
+    if "standard - exposure *" in app_text or "Delay-adjusted" in app_text or "No-delay ceiling" in app_text:
+        fail(errors, "Weighted slowdown interpolation or obsolete labels are still present in app.js.")
     for method, speed in EXPECTED_METHOD_SPEEDS.items():
         pattern = rf'"{re.escape(method)}"\s*:\s*{speed}(?:\D|$)'
         if not re.search(pattern, app_text):
@@ -196,18 +199,21 @@ def main() -> int:
     line_count = len({item["line"] for item in pokemon}) if pokemon else 0
     if line_count != 282:
         fail(errors, f"Expected 282 evolution lines, found {line_count}")
-    if len(groups) != 17497:
-        fail(errors, f"Expected 17,497 display groups, found {len(groups)}")
+    if len(groups) != 14987:
+        fail(errors, f"Expected 14,987 display groups, found {len(groups)}")
     if int(validation.get("summary", {}).get("fatalChecks", -1)) != 0:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
-    if meta.get("siteVersion") != "0.8.8":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.8'.")
-    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.8":
-        fail(errors, "VERSION.txt is not 0.8.8.")
-    if "WARtool v0.8.8" not in index_text or 'APP_VERSION = "0.8.8"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
-        fail(errors, "Public page and local server are not consistently versioned as 0.8.8.")
+    slowed_rows = [group for group in groups if "(Slowed)" in str(group.get("method", ""))]
+    if slowed_rows:
+        fail(errors, f"Found {len(slowed_rows)} duplicate slowed hunt rows; slowdown alternatives must stay inside the base hunt card.")
+    if meta.get("siteVersion") != "0.8.10":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.10'.")
+    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.10":
+        fail(errors, "VERSION.txt is not 0.8.10.")
+    if "WARtool v0.8.10" not in index_text or 'APP_VERSION = "0.8.10"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
+        fail(errors, "Public page and local server are not consistently versioned as 0.8.10.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -262,7 +268,7 @@ def main() -> int:
         if group.get("incomplete"):
             incomplete += 1
 
-    missing_methods = sorted(set(EXPECTED_METHOD_SPEEDS) - set(methods))
+    missing_methods = sorted(set(EXPECTED_METHOD_COUNTS) - set(methods))
     if missing_methods:
         fail(errors, f"Expected methods absent from groups: {', '.join(missing_methods)}")
     if methods != Counter(EXPECTED_METHOD_COUNTS):
@@ -290,12 +296,12 @@ def main() -> int:
 
     zorua_groups = [
         group for group in groups
-        if group.get("method") in {"3x Horde", "3x Horde (Slowed)"}
+        if group.get("method") in {"3x Horde"}
         and any(location.get("location") == "Lostlorn Forest" for location in group.get("locations", []))
         and any(int(component.get("pokemonId", -1)) == 570 for component in group.get("components", []))
     ]
-    if len(zorua_groups) != 14:
-        fail(errors, f"Expected 14 Lostlorn Forest Zorua planner groups, found {len(zorua_groups)}.")
+    if len(zorua_groups) != 7:
+        fail(errors, f"Expected 7 Lostlorn Forest Zorua planner groups, found {len(zorua_groups)}.")
     for group in zorua_groups:
         zorua = next(component for component in group["components"] if int(component.get("pokemonId", -1)) == 570)
         if not math.isclose(float(zorua.get("share", 0)), 0.05, rel_tol=0, abs_tol=1e-10):
@@ -306,13 +312,13 @@ def main() -> int:
     horde_warning_groups = [group for group in groups if any(note.get("code") == "horde-block" for note in group.get("validation", []))]
     exact_direct_groups = [
         group for group in groups
-        if group.get("method") in {"3x Horde", "3x Horde (Slowed)", "5x Horde", "5x Horde (Slowed)"}
+        if group.get("method") in {"3x Horde", "5x Horde"}
         and math.isclose(float(group.get("rawTotal", 0)), 1.0, rel_tol=0, abs_tol=1e-12)
     ]
     if any(any(note.get("code") == "horde-block" for note in group.get("validation", [])) for group in exact_direct_groups):
         fail(errors, "Exact 100% direct Sweet Scent tables are incorrectly marked as warnings.")
-    if len(horde_warning_groups) != 14:
-        fail(errors, f"Expected exactly 14 near-100% horde warning groups, found {len(horde_warning_groups)}.")
+    if len(horde_warning_groups) != 7:
+        fail(errors, f"Expected exactly 7 near-100% horde warning groups, found {len(horde_warning_groups)}.")
     for group in horde_warning_groups:
         if not math.isclose(float(group.get("rawTotal", 0)), 0.9999, rel_tol=0, abs_tol=1e-10):
             fail(errors, f"Unexpected horde warning total {group.get('rawTotal')} in group {group.get('id')}.")
@@ -320,7 +326,7 @@ def main() -> int:
     removed_winter_species = {"Croagunk", "Palpitoad", "Karrablast", "Shelmet", "Stunfisk"}
     corrected_winter_locations = {"Icirrus City", "Moor of Icirrus", "Route 8"}
     for group in groups:
-        if group.get("season") != "Winter" or group.get("method") not in {"Singles", "Lure Singles", "5x Horde", "5x Horde (Slowed)"}:
+        if group.get("season") != "Winter" or group.get("method") not in {"Singles", "Lure Singles", "5x Horde"}:
             continue
         affected_grass = [
             location for location in group.get("locations", [])
@@ -350,14 +356,14 @@ def main() -> int:
         group for group in groups
         if any(hazard.get("name") == "Follow Me" for hazard in group.get("hazards", []))
     ]
-    if len(hazard_groups) != 7832:
-        fail(errors, f"Expected 7,832 safety-warning groups, found {len(hazard_groups)}.")
-    if len(critical_hazard_groups) != 2914:
-        fail(errors, f"Expected 2,914 critical-warning groups, found {len(critical_hazard_groups)}.")
-    if len(rage_powder_groups) != 99:
-        fail(errors, f"Expected 99 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
+    if len(hazard_groups) != 6942:
+        fail(errors, f"Expected 6,942 safety-warning groups, found {len(hazard_groups)}.")
+    if len(critical_hazard_groups) != 2666:
+        fail(errors, f"Expected 2,666 critical-warning groups, found {len(critical_hazard_groups)}.")
+    if len(rage_powder_groups) != 88:
+        fail(errors, f"Expected 88 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
     rage_methods = Counter(group.get("method") for group in rage_powder_groups)
-    expected_rage_methods = Counter({"Lure Singles": 50, "Singles": 27, "5x Horde": 11, "5x Horde (Slowed)": 11})
+    expected_rage_methods = Counter({"Lure Singles": 50, "Singles": 27, "5x Horde": 11})
     if rage_methods != expected_rage_methods:
         fail(errors, f"Rage Powder method coverage changed unexpectedly: {dict(rage_methods)}")
     invalid_single_redirection = [
@@ -372,10 +378,17 @@ def main() -> int:
         fail(errors, f"Expected 36 Follow Me Lure-double warning groups, found {len(follow_me_groups)}.")
     if safari_hazard_groups:
         fail(errors, f"Safari methods must not contain battle hazards; found {len(safari_hazard_groups)} groups.")
-    if len(slowdown_groups) != 6765:
-        fail(errors, f"Expected 6,765 start-delay groups, found {len(slowdown_groups)}.")
+    if len(slowdown_groups) != 6271:
+        fail(errors, f"Expected 6,271 start-delay groups, found {len(slowdown_groups)}.")
     if any(group.get("safari") and group.get("slowdowns") for group in groups):
         fail(errors, "Safari methods must not contain encounter-start ability slowdown indicators.")
+    slowed_hordes = [group for group in groups if group.get("method") in {"3x Horde", "5x Horde"} and group.get("slowdowns")]
+    if len(slowed_hordes) != 494:
+        fail(errors, f"Expected 494 horde groups with a full-slowdown alternative, found {len(slowed_hordes)}.")
+    for group in slowed_hordes:
+        exposure = sum(float(component.get("share", 0)) for component in group.get("components", []) if component.get("slowAbilities"))
+        if not (0 < exposure <= 1 + 1e-9):
+            fail(errors, f"Invalid slowdown exposure {exposure} in group {group.get('id')}.")
     if not any(
         any(item.get("pokemonId") == 58 and "Intimidate" in item.get("abilities", []) for item in group.get("slowdowns", []))
         for group in groups
@@ -468,7 +481,7 @@ def main() -> int:
         if f"{setting_key},{expected_default}" not in settings_template:
             fail(errors, f"Settings CSV template is missing {setting_key} default {expected_default}.")
 
-    if "version: 8" not in app_text or "expected caught pts" not in app_text or "loss est." not in app_text:
+    if "version: 9" not in app_text or "expected caught pts" not in app_text or "loss est." not in app_text:
         fail(errors, "Safari capture model migration or ranking-card labels are missing from app.js.")
 
     # Roster separation.

@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("PORT", "8877"))
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.8.8"
+APP_VERSION = "0.8.10"
 APP_NAME = "WARtool"
 
 
