@@ -971,7 +971,7 @@ function initializeStaticUi() {
   $("#pokemonList").innerHTML = POKEMON.map(p => `<option value="${escapeHtml(p.name)}"></option>`).join("");
   $("#catchDate").value = localDateInputValue();
   GROUPS.forEach(group => {
-    group._search = normalize(`${group.locations.map(l => `${l.region} ${l.location} ${l.encounterTypes.join(" ")}`).join(" ")} ${group.method} ${group.components.map(c => `${c.pokemon} ${c.line} ${(c.hazards || []).map(h => h.name).join(" ")} ${(c.slowAbilities || []).join(" ")}`).join(" ")}`);
+    group._search = normalize(`${group.locations.map(l => `${l.region} ${l.location} ${l.encounterTypes.join(" ")}`).join(" ")} ${group.method} ${group.components.map(c => `${c.pokemon} ${c.line} ${(c.hazards || []).map(h => `${h.name} ${h.category || ""} ${h.verificationStatus || ""}`).join(" ")} ${(c.slowAbilities || []).join(" ")}`).join(" ")}`);
   });
   refreshPlayerSelects();
 }
@@ -1001,16 +1001,40 @@ function rankingFilters(group, context) {
   if ($("#rankOnlyMissing").checked && !group.components.some(c => !context.teamLines.has(c.line))) return false;
   return true;
 }
-function safetySummary(group) {
-  const hazards = group.hazards || [];
-  const redirection = hazards.some(h => h.kind === "redirection");
-  const critical = hazards.some(h => h.severity === "critical" && h.kind !== "redirection");
-  const warning = hazards.some(h => h.severity !== "critical");
-  return { hazards, redirection, critical, warning, slow: (group.slowdowns || []).length > 0 };
+const SAFETY_BADGE_META = {
+  "self-ko": { label: "Self-KO risk", cls: "critical", order: 10 },
+  "escape": { label: "Escape risk", cls: "critical", order: 20 },
+  "redirection": { label: "Redirection risk", cls: "redirect", order: 30 },
+  "held-item": { label: "Held-item risk", cls: "warning", order: 40 },
+  "self-damage": { label: "Self-damage", cls: "warning", order: 50 },
+  "pp-struggle": { label: "PP / Struggle", cls: "preparation", order: 60 },
+  "setup-interaction": { label: "Setup-dependent", cls: "preparation", order: 70 },
+};
+function hazardCategory(hazard) {
+  if (hazard.category) return hazard.category;
+  if (hazard.kind === "redirection") return "redirection";
+  if (hazard.severity === "critical") return "self-ko";
+  return "self-damage";
 }
 function safetyBadges(group) {
-  const s = safetySummary(group);
-  return `${s.critical ? '<span class="safety-badge critical">Self-KO risk</span>' : ''}${s.redirection ? '<span class="safety-badge redirect">Redirection risk</span>' : ''}${!s.critical && !s.redirection && s.warning ? '<span class="safety-badge warning">Self-damage</span>' : ''}${s.slow ? '<span class="safety-badge slowdown"><img src="assets/encounter-slowdown.png" alt="">Start delay</span>' : ''}`;
+  const hazards = group.hazards || [];
+  const badges = new Map();
+  hazards.forEach(hazard => {
+    const category = hazardCategory(hazard);
+    const meta = SAFETY_BADGE_META[category] || { label: "Safety warning", cls: hazard.severity === "critical" ? "critical" : "preparation", order: 90 };
+    const weather = hazard.kind === "weather";
+    const unverified = hazard.verificationStatus === "needs-in-game-test";
+    const key = weather ? "weather" : unverified ? `verify:${category}` : category;
+    const label = weather ? "Weather-dependent" : unverified ? "Needs verification" : meta.label;
+    const cls = weather || unverified ? "preparation" : meta.cls;
+    badges.set(key, { label, cls, order: weather ? 75 : unverified ? 80 : meta.order });
+  });
+  const safety = [...badges.values()].sort((a,b) => a.order - b.order)
+    .map(item => `<span class="safety-badge ${item.cls}">${escapeHtml(item.label)}</span>`).join("");
+  const slow = (group.slowdowns || []).length > 0
+    ? '<span class="safety-badge slowdown"><img src="assets/encounter-slowdown.png" alt="">Start delay</span>'
+    : "";
+  return safety + slow;
 }
 function rankingScoreHtml(score, best = false, isSafari = false) {
   const cls = best ? "best-score" : "hunt-score";
@@ -1025,9 +1049,11 @@ function rankingScoreHtml(score, best = false, isSafari = false) {
 function pokemonSafetyMarkers(component) {
   const hazards = component.hazards || [];
   const critical = hazards.some(h => h.severity === "critical");
-  const redirect = hazards.some(h => h.kind === "redirection");
+  const preparationOnly = hazards.length > 0 && hazards.every(h => h.severity === "preparation");
   const slow = component.slowAbilities || [];
-  const danger = hazards.length ? `<b class="poke-warning ${critical || redirect ? "critical" : "warning"}" title="${escapeHtml(hazards.map(h => `${h.name}: ${h.consequence}`).join(" | "))}">⚠</b>` : "";
+  const title = hazards.map(h => `${h.name} [${hazardCategory(h)}]: ${h.consequence}`).join(" | ");
+  const cls = critical ? "critical" : preparationOnly ? "preparation" : "warning";
+  const danger = hazards.length ? `<b class="poke-warning ${cls}" title="${escapeHtml(title)}">⚠</b>` : "";
   const delay = slow.length ? `<b class="poke-slow" title="Start-of-battle delay: ${escapeHtml(slow.join(", "))}"><img src="assets/encounter-slowdown.png" alt=""></b>` : "";
   return danger + delay;
 }
@@ -1213,7 +1239,14 @@ function openSpotDialog(group, mode, playerId) {
     return `<tr><td>${componentSprite(c)}${pokemonSafetyMarkers(c)}${escapeHtml(c.pokemon)}</td><td>${raw.label}<small class="muted"> · ${raw.explanation}</small></td><td class="numeric">${formatPercent(c.share)}</td>${catchCell}<td class="numeric">${c.unknown && !c.rotationalEstimated ? "—" : formatNumber(c.score,1)}</td><td>${status}</td></tr>`;
   }).join("");
   const notes = group.validation.map(note => `<div class="validation-note ${note.level}">${escapeHtml(note.message)}</div>`).join("");
-  const hazardRows = (group.hazards || []).map(h => `<div class="safety-row ${h.severity}"><strong>${escapeHtml(h.pokemon)} · ${escapeHtml(h.name)}</strong><span>${escapeHtml(h.levelRange ? `Lv. ${h.levelRange} · ` : "")}${escapeHtml(h.consequence)}</span><small>${escapeHtml(h.counter)}</small></div>`).join("");
+  const hazardRows = (group.hazards || []).map(h => {
+    const category = hazardCategory(h);
+    const meta = SAFETY_BADGE_META[category] || { label: category || "Safety warning" };
+    const verification = h.verificationStatus && h.verificationStatus !== "confirmed"
+      ? `<em class="verification-status ${escapeHtml(h.verificationStatus)}">${escapeHtml(h.verificationStatus === "needs-in-game-test" ? "Needs in-game verification" : "Community documented")}</em>`
+      : "";
+    return `<div class="safety-row ${h.severity}"><strong>${escapeHtml(h.pokemon)} · ${escapeHtml(h.name)} <span class="hazard-category">${escapeHtml(meta.label)}</span>${verification}</strong><span>${escapeHtml(h.levelRange ? `Lv. ${h.levelRange} · ` : "")}${escapeHtml(h.consequence)}</span><small>${escapeHtml(h.counter)}</small></div>`;
+  }).join("");
   const slowdownRows = (group.slowdowns || []).map(x => `<div class="safety-row slowdown"><strong>${escapeHtml(x.pokemon)} · ${escapeHtml(x.abilities.join(" / "))}</strong><span>May add a start-of-battle animation or message.</span></div>`).join("");
   const safetySection = hazardRows || slowdownRows ? `<section class="dialog-section"><h4>Shiny safety</h4><div class="safety-list">${hazardRows}${slowdownRows}</div></section>` : "";
   const locations = group.locations.map(location => `<div class="location-option"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)}</small></div><small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div>`).join("");
@@ -1250,7 +1283,7 @@ function resetRankingFilters() {
 }
 function downloadRankingCsv() {
   const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour_standard","encounters_per_hour_100pct_slowed","slowdown_exposure","average_points","points_per_hour_standard","points_per_hour_100pct_slowed","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage","safari_catch_success","safari_loss_chance","safari_catch_model","safari_component_estimates"];
-  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.standardEncountersPerHour,row.score.hasSlowdownRange ? row.score.fullDelayEncountersPerHour : "",row.score.slowdownExposure,row.score.average,row.score.pointsPerHour,row.score.hasSlowdownRange ? row.score.fullDelayPointsPerHour : "",row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name}`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
+  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.standardEncountersPerHour,row.score.hasSlowdownRange ? row.score.fullDelayEncountersPerHour : "",row.score.slowdownExposure,row.score.average,row.score.pointsPerHour,row.score.hasSlowdownRange ? row.score.fullDelayPointsPerHour : "",row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name} [${h.category || h.kind}/${h.severity}/${h.verificationStatus || "confirmed"}]`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
   downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
 }

@@ -1,4 +1,4 @@
-# WARtool v0.8.10
+# WARtool v0.8.11
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -67,6 +67,15 @@ balls-only capture estimate where Johto Safari or Great Marsh data can be
 matched. Unknown rotationals, unmatched species, Kanto Safari and Hoenn Safari
 use the editable 52% success fallback. Settings may instead select a single
 global catch-success override for every Safari species.
+
+## Shiny-safety model
+
+Safety warnings are generated from `data/safety-rules.json`. The rules distinguish
+self-KO, self-damage, escape, redirection, held-item, PP/Struggle and
+setup-dependent risks. Move warnings only appear when the move can occupy one
+of the wild Pokémon's reconstructed four level-up move slots at that location's
+level range. Unverified mechanics are labeled as such instead of being shown as
+confirmed dangers, and Safari encounters suppress battle hazards entirely.
 
 ## Validation and build
 

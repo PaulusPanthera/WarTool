@@ -1,0 +1,214 @@
+{
+  "schemaVersion": 1,
+  "model": "WARtool/PaxDex shared context-aware shiny safety rules",
+  "levelActiveCondition": "Move rules apply only when the move is in the wild Pokémon's reconstructed last four level-up moves at an encounter level.",
+  "verificationStatuses": ["confirmed", "community-documented", "needs-in-game-test"],
+  "categories": ["self-ko", "self-damage", "escape", "redirection", "held-item", "pp-struggle", "setup-interaction", "start-delay"],
+  "startDelayAbilities": [
+    "Intimidate", "Reactive Gas", "Pressure", "Unnerve", "Download", "Frisk", "Forewarn",
+    "Anticipation", "Trace", "Mold Breaker", "Turboblaze", "Teravolt", "Drought", "Drizzle",
+    "Sand Stream", "Snow Warning", "Air Lock", "Cloud Nine", "Slow Start", "Imposter"
+  ],
+  "moveRules": {
+    "Selfdestruct": {
+      "category": "self-ko", "mechanic": "self-ko", "severity": "critical", "contexts": ["non-safari"],
+      "effect": "The user faints immediately.",
+      "preparation": "Use Damp or Imprison. For Koffing/Weezing, current Reactive Gas + Damp behavior needs verification; Imprison is the conservative option.",
+      "verification": "confirmed"
+    },
+    "Explosion": {
+      "category": "self-ko", "mechanic": "self-ko", "severity": "critical", "contexts": ["non-safari"],
+      "effect": "The user faints immediately.",
+      "preparation": "Use Damp or Imprison. For Koffing/Weezing, current Reactive Gas + Damp behavior needs verification; Imprison is the conservative option.",
+      "verification": "confirmed"
+    },
+    "Memento": {
+      "category": "self-ko", "mechanic": "self-ko", "severity": "critical", "contexts": ["non-safari"],
+      "effect": "The user faints immediately.",
+      "preparation": "Use Taunt, Imprison, Encore into a harmless move, or another move-denial method. Trapping alone does not prevent Memento.",
+      "verification": "confirmed"
+    },
+    "Final Gambit": {
+      "category": "self-ko", "mechanic": "self-ko", "severity": "critical", "contexts": ["non-safari"],
+      "effect": "The user faints immediately.",
+      "preparation": "Use a Ghost-type, Taunt or Imprison.",
+      "verification": "confirmed"
+    },
+    "Healing Wish": {
+      "category": "self-ko", "mechanic": "self-ko", "severity": "preparation", "contexts": ["non-safari"],
+      "effect": "The move may cause the user to faint, but its behavior in a lone wild encounter still needs in-game verification.",
+      "preparation": "Treat this as an unverified setup risk; Taunt or Imprison is the conservative preparation.",
+      "verification": "needs-in-game-test"
+    },
+    "Lunar Dance": {
+      "category": "self-ko", "mechanic": "self-ko", "severity": "critical", "contexts": ["non-safari"],
+      "effect": "The user faints immediately.",
+      "preparation": "Taunt or Imprison prevents it.",
+      "verification": "confirmed"
+    },
+    "Perish Song": {
+      "category": "self-ko", "mechanic": "countdown", "severity": "critical", "contexts": ["singles", "lure-double", "dark-grass"],
+      "effect": "In a true single encounter, the user can faint when the perish count reaches zero. Horde members are intentionally excluded.",
+      "preparation": "Catch or reset the battle before the count expires.",
+      "verification": "community-documented"
+    },
+    "Teleport": {
+      "category": "escape", "mechanic": "escape", "severity": "critical", "contexts": ["non-safari"],
+      "effect": "The wild Pokémon can end the battle before it is caught.",
+      "preparation": "Use Arena Trap, Imprison + Teleport, or a trapping move immediately.",
+      "verification": "confirmed"
+    },
+    "Take Down": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a Ghost-type or reduce turns spent battling.", "verification": "confirmed"
+    },
+    "Double-Edge": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a Ghost-type or reduce turns spent battling.", "verification": "confirmed"
+    },
+    "Submission": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a Ghost-type or reduce turns spent battling.", "verification": "confirmed"
+    },
+    "Brave Bird": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a resistant, high-Defense target and avoid extended battles.", "verification": "confirmed"
+    },
+    "Flare Blitz": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a resistant, high-Defense target and avoid extended battles.", "verification": "confirmed"
+    },
+    "Head Smash": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes heavy recoil damage.",
+      "preparation": "Use a Rock-resistant, high-Defense target and capture or control it quickly. Ghost typing does not block this Rock-type move.",
+      "verification": "confirmed"
+    },
+    "Volt Tackle": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a Ground-type.", "verification": "confirmed"
+    },
+    "Wood Hammer": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a resistant, high-Defense target and avoid extended battles.", "verification": "confirmed"
+    },
+    "Wild Charge": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a Ground-type.", "verification": "confirmed"
+    },
+    "Head Charge": {
+      "category": "self-damage", "mechanic": "recoil", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes recoil damage.", "preparation": "Use a Ghost-type.", "verification": "confirmed"
+    },
+    "Jump Kick": {
+      "category": "self-damage", "mechanic": "crash", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes crash damage if the move misses or fails.", "preparation": "Avoid Ghost-types and Protect-like failure conditions.", "verification": "confirmed"
+    },
+    "Hi Jump Kick": {
+      "category": "self-damage", "mechanic": "crash", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user takes crash damage if the move misses or fails.", "preparation": "Avoid Ghost-types and Protect-like failure conditions.", "verification": "confirmed"
+    },
+    "Curse": {
+      "category": "self-damage", "mechanic": "hp-loss", "severity": "warning", "contexts": ["non-safari"],
+      "typeCondition": {"includes": "GHOST"},
+      "effect": "Ghost-type users sacrifice half of their maximum HP.", "preparation": "Taunt or Imprison prevents it.", "verification": "confirmed"
+    },
+    "Thrash": {
+      "category": "self-damage", "mechanic": "confusion", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user becomes confused after the locked attack ends.", "preparation": "Catch quickly or use Own Tempo support.", "verification": "confirmed"
+    },
+    "Outrage": {
+      "category": "self-damage", "mechanic": "confusion", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user becomes confused after the locked attack ends.", "preparation": "Catch quickly or use Own Tempo support.", "verification": "confirmed"
+    },
+    "Petal Dance": {
+      "category": "self-damage", "mechanic": "confusion", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user becomes confused after the locked attack ends.", "preparation": "Catch quickly or use Own Tempo support.", "verification": "confirmed"
+    },
+    "Belly Drum": {
+      "category": "self-damage", "mechanic": "hp-loss", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "The user loses half of its maximum HP when the move succeeds.", "preparation": "Taunt or Imprison prevents it.", "verification": "confirmed"
+    },
+    "Sketch": {
+      "category": "pp-struggle", "mechanic": "pp-struggle", "severity": "preparation", "contexts": ["non-safari"],
+      "speciesCondition": [235],
+      "effect": "If Sketch fails, wild Smeargle can reach Struggle very quickly.",
+      "preparation": "Bring a predictable move for Sketch or deny it immediately; avoid long setup sequences.",
+      "verification": "community-documented"
+    },
+    "Transform": {
+      "category": "pp-struggle", "mechanic": "pp-struggle", "severity": "preparation", "contexts": ["non-safari"],
+      "speciesCondition": [132],
+      "effect": "Transform copies a moveset with limited PP and can create a dangerous or slow capture state.",
+      "preparation": "Lead with a controlled low-risk moveset or prevent Transform before beginning a long capture setup.",
+      "verification": "community-documented"
+    },
+    "Trick": {
+      "category": "setup-interaction", "mechanic": "item-swap", "severity": "preparation", "contexts": ["non-safari"],
+      "effect": "The wild Pokémon can exchange held items with your catcher; a Toxic Orb or other damaging item can become dangerous.",
+      "preparation": "Use an itemless or safe-item catcher, or deny the move with Taunt/Imprison.",
+      "verification": "confirmed"
+    },
+    "Switcheroo": {
+      "category": "setup-interaction", "mechanic": "item-swap", "severity": "preparation", "contexts": ["non-safari"],
+      "effect": "The wild Pokémon can exchange held items with your catcher; a Toxic Orb or other damaging item can become dangerous.",
+      "preparation": "Use an itemless or safe-item catcher, or deny the move with Taunt/Imprison.",
+      "verification": "confirmed"
+    },
+    "Rage Powder": {
+      "category": "redirection", "mechanic": "redirection", "severity": "critical", "contexts": ["explicit-horde", "natural-horde", "lure-double", "dark-grass"],
+      "effect": "Can redirect a targeted cleanup move in a multi-opponent encounter.",
+      "preparation": "Move-specific preparation is generated from encounter context.",
+      "verification": "confirmed"
+    },
+    "Follow Me": {
+      "category": "redirection", "mechanic": "redirection", "severity": "critical", "contexts": ["explicit-horde", "natural-horde", "lure-double", "dark-grass"],
+      "effect": "Can redirect a targeted cleanup move in a multi-opponent encounter.",
+      "preparation": "Move-specific preparation is generated from encounter context.",
+      "verification": "confirmed"
+    }
+  },
+  "abilityRules": {
+    "Dry Skin": {
+      "category": "self-damage", "mechanic": "weather", "severity": "preparation", "contexts": ["non-safari", "weather"],
+      "effect": "The Pokémon loses HP each turn in harsh sunlight, but the encounter dump does not expose active battle weather.",
+      "preparation": "Avoid harsh sunlight and verify the location's current battle weather.",
+      "verification": "needs-in-game-test"
+    },
+    "Solar Power": {
+      "category": "self-damage", "mechanic": "weather", "severity": "preparation", "contexts": ["non-safari", "weather"],
+      "effect": "The Pokémon loses HP each turn in harsh sunlight, but the encounter dump does not expose active battle weather.",
+      "preparation": "Avoid harsh sunlight and verify the location's current battle weather.",
+      "verification": "needs-in-game-test"
+    }
+  },
+  "heldItemRules": {
+    "Sticky Barb": {
+      "category": "held-item", "mechanic": "held-item-hp-loss", "severity": "warning", "contexts": ["non-safari"],
+      "effect": "This species can hold Sticky Barb and lose HP each turn while holding it.",
+      "preparation": "Do not rely on False Swipe alone; bring Heal Pulse or a safe way to remove or replace the item.",
+      "verification": "community-documented"
+    }
+  },
+  "speciesRules": {
+    "132": {
+      "name": "Transform / Imposter preparation",
+      "category": "pp-struggle", "mechanic": "pp-struggle", "severity": "preparation", "contexts": ["non-safari"],
+      "effect": "Ditto's Transform or possible Imposter activation can copy limited-PP moves and create a dangerous or slow capture state.",
+      "preparation": "Use a controlled lead with a safe moveset and plan the capture before Ditto copies it.",
+      "verification": "community-documented"
+    }
+  },
+  "compoundRules": [
+    {
+      "name": "Hoppip / Skiploom compound setup",
+      "speciesCondition": [187, 188],
+      "activeMovesAny": ["Rage Powder", "Memento", "Bounce", "Worry Seed"],
+      "minimumActive": 2,
+      "category": "setup-interaction", "mechanic": "compound", "severity": "preparation", "contexts": ["non-safari"],
+      "effect": "Multiple capture hazards can overlap: redirection, Memento, Bounce and Worry Seed may require one combined plan.",
+      "preparation": "Use Taunt or Imprison to cover Memento and redirection together. A faster Extreme Speed or Feint can beat +2 redirection; do not rely only on Overcoat when Worry Seed is active.",
+      "verification": "community-documented"
+    }
+  ]
+}

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import collections
 import copy
+import json
+from pathlib import Path
 from typing import Any
 
 JOHTO_SAFARI_AREAS = {
@@ -10,46 +12,26 @@ JOHTO_SAFARI_AREAS = {
     351: "Marshland", 352: "Wasteland", 353: "Mountain", 354: "Desert",
 }
 HOENN_SAFARI_AREAS = {844: 1, 588: 2, 76: 3, 332: 4, 3404: 5, 3148: 6}
-START_DELAY_ABILITIES = {
-    "Intimidate", "Reactive Gas", "Pressure", "Unnerve", "Download",
-    "Frisk", "Forewarn", "Anticipation", "Trace", "Mold Breaker",
-    "Turboblaze", "Teravolt", "Drought", "Drizzle", "Sand Stream",
-    "Snow Warning", "Air Lock", "Cloud Nine", "Slow Start", "Imposter",
-}
-HAZARD_MOVES = {
-    "Selfdestruct": ("self-ko", "critical", "The user faints immediately.", "Use Damp; against Koffing/Weezing prefer Imprison because Reactive Gas can suppress Damp."),
-    "Explosion": ("self-ko", "critical", "The user faints immediately.", "Use Damp; against Koffing/Weezing prefer Imprison because Reactive Gas can suppress Damp."),
-    "Memento": ("self-ko", "critical", "The user faints immediately.", "Taunt, Imprison or an appropriate trapping/control setup prevents it."),
-    "Final Gambit": ("self-ko", "critical", "The user faints immediately.", "Use a Ghost-type, Taunt or Imprison."),
-    "Healing Wish": ("self-ko", "critical", "The user faints immediately.", "Taunt or Imprison prevents it."),
-    "Lunar Dance": ("self-ko", "critical", "The user faints immediately.", "Taunt or Imprison prevents it."),
-    "Perish Song": ("countdown", "critical", "The user can faint when the perish count reaches zero.", "Catch or reset the battle before the count expires."),
-    "Take Down": ("recoil", "warning", "The user takes recoil damage.", "Use a Ghost-type or reduce turns spent battling."),
-    "Double-Edge": ("recoil", "warning", "The user takes recoil damage.", "Use a Ghost-type or reduce turns spent battling."),
-    "Submission": ("recoil", "warning", "The user takes recoil damage.", "Use a Ghost-type or reduce turns spent battling."),
-    "Brave Bird": ("recoil", "warning", "The user takes recoil damage.", "Use a resistant target and avoid extended battles."),
-    "Flare Blitz": ("recoil", "warning", "The user takes recoil damage.", "Use a resistant target and avoid extended battles."),
-    "Head Smash": ("recoil", "warning", "The user takes heavy recoil damage.", "Use a Ghost-type or a highly resistant target."),
-    "Volt Tackle": ("recoil", "warning", "The user takes recoil damage.", "Use a Ground-type."),
-    "Wood Hammer": ("recoil", "warning", "The user takes recoil damage.", "Use a resistant target and avoid extended battles."),
-    "Wild Charge": ("recoil", "warning", "The user takes recoil damage.", "Use a Ground-type."),
-    "Head Charge": ("recoil", "warning", "The user takes recoil damage.", "Use a Ghost-type."),
-    "Jump Kick": ("crash", "warning", "The user takes crash damage if the move misses or fails.", "Avoid Ghost-types and Protect-like failure conditions."),
-    "Hi Jump Kick": ("crash", "warning", "The user takes crash damage if the move misses or fails.", "Avoid Ghost-types and Protect-like failure conditions."),
-    "Curse": ("hp-loss", "warning", "Ghost-type users sacrifice half of their maximum HP.", "Taunt or Imprison prevents it."),
-    "Thrash": ("confusion", "warning", "The user becomes confused after the locked attack ends.", "Catch quickly or use Own Tempo support."),
-    "Outrage": ("confusion", "warning", "The user becomes confused after the locked attack ends.", "Catch quickly or use Own Tempo support."),
-    "Petal Dance": ("confusion", "warning", "The user becomes confused after the locked attack ends.", "Catch quickly or use Own Tempo support."),
-    "Belly Drum": ("hp-loss", "warning", "The user loses half of its maximum HP when the move succeeds.", "Taunt or Imprison prevents it."),
-}
-REDIRECTION_MOVES = {
-    "Rage Powder": ("redirection", "critical"),
-    "Follow Me": ("redirection", "critical"),
-}
-HAZARD_ABILITIES = {
-    "Dry Skin": ("weather", "warning", "The Pokémon loses HP each turn in harsh sunlight.", "Avoid harsh sunlight."),
-    "Solar Power": ("weather", "warning", "The Pokémon loses HP each turn in harsh sunlight.", "Avoid harsh sunlight."),
-}
+SAFETY_RULES_PATH = Path(__file__).resolve().parents[1] / "data" / "safety-rules.json"
+
+
+def load_safety_rules(path: Path = SAFETY_RULES_PATH) -> dict[str, Any]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("schemaVersion") != 1:
+        raise ValueError(f"Unsupported safety-rules schema in {path}")
+    required = ("moveRules", "abilityRules", "heldItemRules", "speciesRules", "compoundRules", "startDelayAbilities")
+    if any(key not in payload for key in required):
+        raise ValueError(f"Incomplete safety-rules file: {path}")
+    return payload
+
+
+SAFETY_RULES = load_safety_rules()
+START_DELAY_ABILITIES = set(SAFETY_RULES["startDelayAbilities"])
+MOVE_RULES = SAFETY_RULES["moveRules"]
+ABILITY_RULES = SAFETY_RULES["abilityRules"]
+HELD_ITEM_RULES = SAFETY_RULES["heldItemRules"]
+SPECIES_RULES = SAFETY_RULES["speciesRules"]
+COMPOUND_RULES = SAFETY_RULES["compoundRules"]
 
 
 def normalize_safari_location(region: str, location_id: int, location: str) -> str:
@@ -107,74 +89,189 @@ def compact_ranges(levels: set[int]) -> str:
     return ", ".join(out)
 
 
-def safety_maps(monsters: list[dict[str, Any]]) -> tuple[dict[int, list[dict[str, Any]]], dict[int, list[str]], dict[int, list[str]]]:
+def safety_maps(monsters: list[dict[str, Any]]) -> tuple[
+    dict[int, list[dict[str, Any]]], dict[int, list[str]], dict[int, list[str]],
+    dict[int, list[str]], dict[int, list[str]], dict[int, list[str]],
+]:
     moves: dict[int, list[dict[str, Any]]] = {}
     slow: dict[int, list[str]] = {}
-    abilities: dict[int, list[str]] = {}
+    normal_abilities: dict[int, list[str]] = {}
+    all_abilities: dict[int, list[str]] = {}
+    types: dict[int, list[str]] = {}
+    held_items: dict[int, list[str]] = {}
     for mon in monsters:
         pid = int(mon["id"])
         moves[pid] = [m for m in mon.get("moves", []) if str(m.get("type", "")).lower() == "level"]
-        normal_abilities: list[str] = []
-        for ability in mon.get("abilities", [])[:2]:
-            name = str(ability.get("name") or "").strip()
-            if name and name != "-" and name not in normal_abilities:
-                normal_abilities.append(name)
-        abilities[pid] = normal_abilities
-        slow[pid] = [name for name in normal_abilities if name in START_DELAY_ABILITIES]
-    return moves, slow, abilities
+        normal: list[str] = []
+        all_names: list[str] = []
+        for index, ability in enumerate(mon.get("abilities", [])):
+            name = str(ability.get("name") or "").strip(" -")
+            if not name or name == "-":
+                continue
+            if name not in all_names:
+                all_names.append(name)
+            if index < 2 and name not in normal:
+                normal.append(name)
+        normal_abilities[pid] = normal
+        all_abilities[pid] = all_names
+        slow[pid] = [name for name in normal if name in START_DELAY_ABILITIES]
+        types[pid] = [str(value or "").upper() for value in mon.get("types", []) if value]
+        held_items[pid] = [str(item.get("name") or "") for item in mon.get("held_items", []) if item.get("name")]
+    return moves, slow, normal_abilities, all_abilities, types, held_items
 
 
-def redirection_context(method: str, encounter_types: list[str], sources: list[dict[str, Any]]) -> tuple[str, str] | None:
+def component_contexts(method: str, encounter_types: list[str], sources: list[dict[str, Any]]) -> set[str]:
+    contexts: set[str] = {"non-safari"}
     if "Horde" in method:
-        return (
-            "In this horde it can redirect a targeted cleanup attack onto itself, potentially causing the shiny to be hit.",
-            "Control the redirect user first, use a Grass-type/Overcoat attacker for Rage Powder, or use a safe priority strategy.",
-        )
+        contexts.add("explicit-horde")
+        return contexts
+    source_labels = [str(source.get("label") or "") for source in sources]
+    has_single = any(label in {"Single encounter", "Lure-exclusive encounter"} for label in source_labels)
+    has_natural = any(label.startswith("Natural ") and "horde" in label.lower() for label in source_labels)
+    if has_single or not source_labels:
+        contexts.add("singles")
+    if has_natural:
+        contexts.add("natural-horde")
     if "Lure" in method:
-        return (
-            "Only dangerous when the Lure opens a wild double battle; it can redirect a targeted cleanup attack onto itself. It is harmless in a true single battle.",
-            "Treat the encounter as a double until confirmed otherwise; control the redirect user or avoid targeted cleanup attacks.",
-        )
+        contexts.update({"singles", "lure-double"})
     if "Dark Grass" in encounter_types:
-        return (
-            "Dark Grass can open a wild double battle, where it can redirect a targeted cleanup attack onto itself. It is harmless in a true single battle.",
-            "Treat the encounter as a double until confirmed otherwise; control the redirect user or avoid targeted cleanup attacks.",
-        )
-    if any(str(source.get("label", "")).startswith("Natural ") and "horde" in str(source.get("label", "")).lower() for source in sources):
-        return (
-            "This species can appear through the natural horde roll and redirect a targeted cleanup attack onto itself. It is harmless when encountered alone.",
-            "Check whether the encounter is a horde before using targeted cleanup attacks; control the redirect user first.",
-        )
-    return None
+        contexts.update({"singles", "dark-grass"})
+    return contexts
+
+
+def rule_applies(rule: dict[str, Any], pid: int, pokemon_types: list[str], contexts: set[str]) -> bool:
+    allowed = set(rule.get("contexts", []))
+    if allowed and not (allowed & contexts):
+        return False
+    species = rule.get("speciesCondition")
+    if species and pid not in {int(value) for value in species}:
+        return False
+    type_condition = rule.get("typeCondition") or {}
+    required = str(type_condition.get("includes") or "").upper()
+    if required and required not in pokemon_types:
+        return False
+    return True
+
+
+def safety_row(pid: int, pokemon: str, name: str, rule: dict[str, Any], level_range: str,
+               contexts: set[str], consequence: str | None = None, counter: str | None = None,
+               details: dict[str, Any] | None = None) -> dict[str, Any]:
+    row = {
+        "pokemonId": pid,
+        "pokemon": pokemon,
+        "name": name,
+        "category": str(rule.get("category") or "setup-interaction"),
+        "kind": str(rule.get("mechanic") or rule.get("category") or "warning"),
+        "severity": str(rule.get("severity") or "warning"),
+        "levelRange": level_range,
+        "contexts": sorted(contexts),
+        "consequence": consequence if consequence is not None else str(rule.get("effect") or ""),
+        "counter": counter if counter is not None else str(rule.get("preparation") or ""),
+        "verificationStatus": str(rule.get("verification") or "confirmed"),
+    }
+    if details:
+        row["details"] = details
+    return row
+
+
+def redirection_text(move_name: str, pokemon: str, contexts: set[str], worry_seed_overlap: bool) -> tuple[str, str]:
+    if "explicit-horde" in contexts:
+        consequence = "In this horde it can redirect a targeted cleanup attack onto itself, potentially causing the shiny to be hit."
+    elif "lure-double" in contexts:
+        consequence = "Only dangerous when the Lure opens a wild double battle; it can redirect a targeted cleanup attack onto itself. It is harmless in a true single battle."
+    elif "dark-grass" in contexts:
+        consequence = "Dark Grass can open a wild double battle, where it can redirect a targeted cleanup attack onto itself. It is harmless in a true single battle."
+    else:
+        consequence = "This species can appear through the natural horde roll and redirect a targeted cleanup attack onto itself. It is harmless when encountered alone."
+    priority = "A faster Extreme Speed or Feint user can act first at the same +2 priority; Taunt or Imprison are alternatives."
+    if move_name == "Rage Powder":
+        immunity = "Grass types and Overcoat ignore Rage Powder."
+        if pokemon in {"Hoppip", "Skiploom"}:
+            immunity += " Do not rely only on Overcoat against this species because Worry Seed can remove it."
+        counter = f"{priority} {immunity}"
+    else:
+        counter = f"{priority} Grass typing and Overcoat do not ignore Follow Me."
+    return consequence, counter
 
 
 def hazard_rows(pid: int, pokemon: str, level_min: int, level_max: int, method: str, safari: bool,
                 encounter_types: list[str], sources: list[dict[str, Any]],
-                level_moves: dict[int, list[dict[str, Any]]], abilities: dict[int, list[str]]) -> list[dict[str, Any]]:
+                level_moves: dict[int, list[dict[str, Any]]], normal_abilities: dict[int, list[str]],
+                all_abilities: dict[int, list[str]], pokemon_types: dict[int, list[str]],
+                held_items: dict[int, list[str]]) -> list[dict[str, Any]]:
     if safari or pid <= 0:
         return []
-    redirect_context = redirection_context(method, encounter_types, sources)
-    by_name: dict[str, set[int]] = collections.defaultdict(set)
+    contexts = component_contexts(method, encounter_types, sources)
+    types = pokemon_types.get(pid, [])
+    active_by_level: dict[int, set[str]] = {}
+    move_levels: dict[str, set[int]] = collections.defaultdict(set)
     for level in range(max(1, level_min), max(level_min, level_max) + 1):
-        for move in wild_moves_at_level(level_moves.get(pid, []), level):
-            if move == "Perish Song" and "Horde" in method:
-                continue
-            if move in HAZARD_MOVES or (move in REDIRECTION_MOVES and redirect_context):
-                by_name[move].add(level)
+        active = set(wild_moves_at_level(level_moves.get(pid, []), level))
+        active_by_level[level] = active
+        for move in active:
+            rule = MOVE_RULES.get(move)
+            if rule and rule_applies(rule, pid, types, contexts):
+                move_levels[move].add(level)
+
     rows: list[dict[str, Any]] = []
-    for name, levels in by_name.items():
-        if name in REDIRECTION_MOVES:
-            kind, severity = REDIRECTION_MOVES[name]
-            consequence, counter = redirect_context or ("", "")
-        else:
-            kind, severity, consequence, counter = HAZARD_MOVES[name]
-        rows.append({"pokemonId": pid, "pokemon": pokemon, "name": name, "kind": kind, "severity": severity,
-                     "levelRange": compact_ranges(levels), "consequence": consequence, "counter": counter})
-    for ability in abilities.get(pid, []):
-        if ability in HAZARD_ABILITIES:
-            kind, severity, consequence, counter = HAZARD_ABILITIES[ability]
-            rows.append({"pokemonId": pid, "pokemon": pokemon, "name": ability, "kind": kind, "severity": severity,
-                         "levelRange": f"{level_min}–{level_max}", "consequence": consequence, "counter": counter})
+    for name, levels in move_levels.items():
+        rule = MOVE_RULES[name]
+        consequence = None
+        counter = None
+        details = None
+        if rule.get("category") == "redirection":
+            worry_overlap = any("Worry Seed" in active for active in active_by_level.values())
+            consequence, counter = redirection_text(name, pokemon, contexts, worry_overlap)
+            details = {"worrySeedOverlap": worry_overlap}
+        rows.append(safety_row(
+            pid, pokemon, name, rule, compact_ranges(levels), contexts,
+            consequence=consequence, counter=counter, details=details,
+        ))
+
+    for ability in normal_abilities.get(pid, []):
+        rule = ABILITY_RULES.get(ability)
+        if rule and rule_applies(rule, pid, types, contexts | {"weather"}):
+            rows.append(safety_row(pid, pokemon, ability, rule, f"{level_min}–{level_max}", contexts | {"weather"}))
+
+    for item_name, rule in HELD_ITEM_RULES.items():
+        if any(item_name.lower() in held.lower() for held in held_items.get(pid, [])) and rule_applies(rule, pid, types, contexts):
+            rows.append(safety_row(pid, pokemon, item_name, rule, f"{level_min}–{level_max}", contexts))
+
+    species_rule = SPECIES_RULES.get(str(pid))
+    if species_rule and rule_applies(species_rule, pid, types, contexts):
+        # Avoid duplicating Ditto's move-level Transform preparation row; the species rule adds the Imposter context.
+        rows = [row for row in rows if not (pid == 132 and row.get("name") == "Transform")]
+        rows.append(safety_row(
+            pid, pokemon, str(species_rule.get("name") or "Species preparation"), species_rule,
+            f"{level_min}–{level_max}", contexts,
+            details={"abilities": all_abilities.get(pid, [])},
+        ))
+
+    for compound in COMPOUND_RULES:
+        species = {int(value) for value in compound.get("speciesCondition", [])}
+        if pid not in species or not rule_applies(compound, pid, types, contexts):
+            continue
+        relevant = set(compound.get("activeMovesAny", []))
+        minimum = int(compound.get("minimumActive", 2) or 2)
+        active_names = sorted({move for active in active_by_level.values() for move in active if move in relevant})
+        if len(active_names) < minimum:
+            continue
+        compound_levels = {level for level, active in active_by_level.items() if active & relevant}
+        consequence = str(compound.get("effect") or "") + f" Active across this level range: {', '.join(active_names)}."
+        counter = "Use Taunt or Imprison to cover the active risks together."
+        if "Rage Powder" in active_names:
+            counter += " A faster Extreme Speed or Feint can beat +2 redirection."
+        if "Rage Powder" in active_names and "Worry Seed" in active_names:
+            counter += " Do not rely only on Overcoat because another level in this encounter range can carry Worry Seed."
+        rows.append(safety_row(
+            pid, pokemon, str(compound.get("name") or "Compound setup"), compound,
+            compact_ranges(compound_levels), contexts,
+            consequence=consequence, counter=counter,
+            details={"activeMoves": active_names},
+        ))
+
+    severity_order = {"critical": 0, "warning": 1, "preparation": 2}
+    rows.sort(key=lambda row: (severity_order.get(row["severity"], 9), row["category"], row["name"]))
     return rows
 
 
@@ -323,7 +420,7 @@ def transform_random_tables(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def add_safety(rows: list[dict[str, Any]], monsters: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    moves, slow, abilities = safety_maps(monsters)
+    moves, slow, normal_abilities, all_abilities, types, held_items = safety_maps(monsters)
     for row in rows:
         safari = bool(row.get("safari"))
         group_hazards: list[dict[str, Any]] = []
@@ -343,7 +440,8 @@ def add_safety(rows: list[dict[str, Any]], monsters: list[dict[str, Any]]) -> li
             })
             component["hazards"] = hazard_rows(
                 pid, component["pokemon"], level_min, level_max, row["method"], safari,
-                encounter_types, component.get("sources", []), moves, abilities,
+                encounter_types, component.get("sources", []), moves, normal_abilities,
+                all_abilities, types, held_items,
             )
             # Safari encounters do not enter the normal battle-intro sequence, so encounter-start abilities do not delay them.
             component["slowAbilities"] = [] if safari else slow.get(pid, [])

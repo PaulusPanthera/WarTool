@@ -36,7 +36,7 @@ TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
 
 EXPECTED_METHOD_COUNTS = {
     "5x Horde": 1887,
-    "3x Horde": 623,
+    "3x Horde": 621,
     "Lure Singles": 3435,
     "Singles": 4174,
     "Safari Singles": 400,
@@ -124,7 +124,7 @@ def main() -> int:
         "START_WARTOOL.bat", "tools/rebuild_encounters.py", "tools/enrich_encounters.py",
         "tools/import_google_sheet.py", "tools/build_static_site.py", "tools/SETTINGS_SHEET_TEMPLATE.csv",
         "tools/GOOGLE_SHEET_SETUP.md", "tools/MUSH_WARtool_Google_Sheet_Template.xlsx",
-        "assets/encounter-slowdown.png", "data/safari-rates.json",
+        "assets/encounter-slowdown.png", "data/safari-rates.json", "data/safety-rules.json",
     ]
     for relative in required:
         if not (ROOT / relative).is_file():
@@ -145,9 +145,10 @@ def main() -> int:
         import_report = json.loads((ROOT / "data/live/import-report.json").read_text(encoding="utf-8"))
         live_sources = json.loads((ROOT / "data/live/sources.json").read_text(encoding="utf-8"))
         safari_rates = json.loads((ROOT / "data/safari-rates.json").read_text(encoding="utf-8"))
+        safety_rules = json.loads((ROOT / "data/safety-rules.json").read_text(encoding="utf-8"))
     except (ValueError, json.JSONDecodeError, KeyError) as error:
         fail(errors, f"Data parsing failed: {error}")
-        groups, validation, pokemon, meta, roster, live, import_report, live_sources, safari_rates = [], {}, [], {}, [], {}, {}, {}, {}
+        groups, validation, pokemon, meta, roster, live, import_report, live_sources, safari_rates, safety_rules = [], {}, [], {}, [], {}, {}, {}, {}, {}
 
     # HTML and local assets.
     parser = IdParser()
@@ -178,7 +179,7 @@ def main() -> int:
         fail(errors, "Dark-mode contrast release rules are missing.")
     if "v0.7.1 dark-mode readability hotfix" not in css_text:
         fail(errors, "Dark-mode readability hotfix rules are missing.")
-    for marker in ("Redirection risk", "Start delay", "safari_coverage", "safety_warnings", "slowdown_abilities", "johtoSafariRotationalTier", "greatMarshRotationalTier", "rotationalTierOptions", "safariCatchModel", "safariUnknownCatchChance", "safariCaptureFor", "expected captured points/shiny"):
+    for marker in ("Redirection risk", "Escape risk", "Held-item risk", "PP / Struggle", "Setup-dependent", "Needs verification", "Start delay", "safari_coverage", "safety_warnings", "slowdown_abilities", "johtoSafariRotationalTier", "greatMarshRotationalTier", "rotationalTierOptions", "safariCatchModel", "safariUnknownCatchChance", "safariCaptureFor", "expected captured points/shiny"):
         if marker not in app_text:
             fail(errors, f"Safety/slowdown UI marker missing from app.js: {marker}")
     if "encounter-slowdown.png" not in app_text:
@@ -199,8 +200,8 @@ def main() -> int:
     line_count = len({item["line"] for item in pokemon}) if pokemon else 0
     if line_count != 282:
         fail(errors, f"Expected 282 evolution lines, found {line_count}")
-    if len(groups) != 14987:
-        fail(errors, f"Expected 14,987 display groups, found {len(groups)}")
+    if len(groups) != 14985:
+        fail(errors, f"Expected 14,985 display groups, found {len(groups)}")
     if int(validation.get("summary", {}).get("fatalChecks", -1)) != 0:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
@@ -208,12 +209,12 @@ def main() -> int:
     slowed_rows = [group for group in groups if "(Slowed)" in str(group.get("method", ""))]
     if slowed_rows:
         fail(errors, f"Found {len(slowed_rows)} duplicate slowed hunt rows; slowdown alternatives must stay inside the base hunt card.")
-    if meta.get("siteVersion") != "0.8.10":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.10'.")
-    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.10":
-        fail(errors, "VERSION.txt is not 0.8.10.")
-    if "WARtool v0.8.10" not in index_text or 'APP_VERSION = "0.8.10"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
-        fail(errors, "Public page and local server are not consistently versioned as 0.8.10.")
+    if meta.get("siteVersion") != "0.8.11":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.11'.")
+    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.11":
+        fail(errors, "VERSION.txt is not 0.8.11.")
+    if "WARtool v0.8.11" not in index_text or 'APP_VERSION = "0.8.11"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
+        fail(errors, "Public page and local server are not consistently versioned as 0.8.11.")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -356,10 +357,46 @@ def main() -> int:
         group for group in groups
         if any(hazard.get("name") == "Follow Me" for hazard in group.get("hazards", []))
     ]
-    if len(hazard_groups) != 6942:
-        fail(errors, f"Expected 6,942 safety-warning groups, found {len(hazard_groups)}.")
-    if len(critical_hazard_groups) != 2666:
-        fail(errors, f"Expected 2,666 critical-warning groups, found {len(critical_hazard_groups)}.")
+    warning_hazard_groups = [
+        group for group in groups
+        if any(hazard.get("severity") == "warning" for hazard in group.get("hazards", []))
+    ]
+    preparation_hazard_groups = [
+        group for group in groups
+        if any(hazard.get("severity") == "preparation" for hazard in group.get("hazards", []))
+    ]
+    all_hazards = [hazard for group in groups for hazard in group.get("hazards", [])]
+
+    # Shared context-aware safety-rule contract.
+    if safety_rules.get("schemaVersion") != 1:
+        fail(errors, "Safety rules schemaVersion must be 1.")
+    expected_categories = {"self-ko", "self-damage", "escape", "redirection", "held-item", "pp-struggle", "setup-interaction", "start-delay"}
+    if set(safety_rules.get("categories", [])) != expected_categories:
+        fail(errors, f"Unexpected shared safety categories: {safety_rules.get('categories')!r}")
+    verification_statuses = {"confirmed", "community-documented", "needs-in-game-test"}
+    if set(safety_rules.get("verificationStatuses", [])) != verification_statuses:
+        fail(errors, "Shared safety verification-status list changed unexpectedly.")
+    for collection_name in ("moveRules", "abilityRules", "heldItemRules", "speciesRules"):
+        collection = safety_rules.get(collection_name)
+        if not isinstance(collection, dict) or not collection:
+            fail(errors, f"Shared safety collection {collection_name} is missing or empty.")
+            continue
+        for rule_name, rule in collection.items():
+            missing = [key for key in ("category", "severity", "contexts", "effect", "preparation", "verification") if key not in rule]
+            if missing:
+                fail(errors, f"Safety rule {collection_name}.{rule_name} is missing: {', '.join(missing)}")
+    if not isinstance(safety_rules.get("compoundRules"), list) or not safety_rules.get("compoundRules"):
+        fail(errors, "Shared compound safety rules are missing.")
+    if any(hazard.get("category") not in expected_categories - {"start-delay"} for hazard in all_hazards):
+        fail(errors, "Generated hazards contain an invalid safety category.")
+    if any(hazard.get("severity") not in {"critical", "warning", "preparation"} for hazard in all_hazards):
+        fail(errors, "Generated hazards contain an invalid severity.")
+    if any(hazard.get("verificationStatus") not in verification_statuses for hazard in all_hazards):
+        fail(errors, "Generated hazards contain an invalid verification status.")
+    if len(hazard_groups) != 7242:
+        fail(errors, f"Expected 7,242 safety-warning groups, found {len(hazard_groups)}.")
+    if len(critical_hazard_groups) != 2997:
+        fail(errors, f"Expected 2,997 critical-warning groups, found {len(critical_hazard_groups)}.")
     if len(rage_powder_groups) != 88:
         fail(errors, f"Expected 88 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
     rage_methods = Counter(group.get("method") for group in rage_powder_groups)
@@ -376,6 +413,63 @@ def main() -> int:
         fail(errors, f"Redirection warnings leaked into {len(invalid_single_redirection)} true single-only groups.")
     if len(follow_me_groups) != 36 or any(group.get("method") != "Lure Singles" for group in follow_me_groups):
         fail(errors, f"Expected 36 Follow Me Lure-double warning groups, found {len(follow_me_groups)}.")
+    if len(warning_hazard_groups) != 6088:
+        fail(errors, f"Expected 6,088 warning-severity groups, found {len(warning_hazard_groups)}.")
+    if len(preparation_hazard_groups) != 929:
+        fail(errors, f"Expected 929 preparation groups, found {len(preparation_hazard_groups)}.")
+
+    # 2026-08-02 safety-audit corrections.
+    non_ghost_curse_species = {"Camerupt", "Ferrothorn", "Hippopotas", "Numel", "Onix", "Shelmet", "Steelix", "Turtwig"}
+    leaked_curse = [hazard for hazard in all_hazards if hazard.get("name") == "Curse" and hazard.get("pokemon") in non_ghost_curse_species]
+    if leaked_curse:
+        fail(errors, f"Non-Ghost Curse false positives remain: {sorted({row.get('pokemon') for row in leaked_curse})}")
+    curse_species = {hazard.get("pokemon") for hazard in all_hazards if hazard.get("name") == "Curse"}
+    if curse_species != {"Cofagrigus", "Dusclops", "Gastly", "Shuppet", "Spiritomb"}:
+        fail(errors, f"Unexpected Ghost-type Curse coverage: {sorted(curse_species)}")
+
+    head_smash = [hazard for hazard in all_hazards if hazard.get("name") == "Head Smash"]
+    if not head_smash or any("Rock-resistant" not in str(hazard.get("counter")) or "Use a Ghost-type" in str(hazard.get("counter")) for hazard in head_smash):
+        fail(errors, "Head Smash advice must recommend Rock resistance and must not claim Ghost immunity.")
+    memento = [hazard for hazard in all_hazards if hazard.get("name") == "Memento"]
+    if not memento or any("Trapping alone does not prevent Memento" not in str(hazard.get("counter")) for hazard in memento):
+        fail(errors, "Memento advice still implies that trapping alone prevents the move.")
+    rage_rows = [hazard for hazard in all_hazards if hazard.get("name") == "Rage Powder"]
+    follow_rows = [hazard for hazard in all_hazards if hazard.get("name") == "Follow Me"]
+    if any("Extreme Speed or Feint" not in str(row.get("counter")) or "Grass types and Overcoat ignore Rage Powder" not in str(row.get("counter")) for row in rage_rows):
+        fail(errors, "Rage Powder move-specific counter guidance is incomplete.")
+    if not any(row.get("pokemon") in {"Hoppip", "Skiploom"} and "Worry Seed can remove it" in str(row.get("counter")) for row in rage_rows):
+        fail(errors, "Hoppip/Skiploom Worry Seed caveat is missing from Rage Powder guidance.")
+    if any("Extreme Speed or Feint" not in str(row.get("counter")) or "do not ignore Follow Me" not in str(row.get("counter")) for row in follow_rows):
+        fail(errors, "Follow Me move-specific counter guidance is incomplete.")
+
+    expected_new_safety_groups = {
+        "Teleport": 397,
+        "Sticky Barb": 61,
+        "Sketch": 45,
+        "Transform / Imposter preparation": 272,
+        "Trick": 122,
+        "Switcheroo": 16,
+        "Hoppip / Skiploom compound setup": 109,
+    }
+    for warning_name, expected_count in expected_new_safety_groups.items():
+        actual = sum(any(hazard.get("name") == warning_name for hazard in group.get("hazards", [])) for group in groups)
+        if actual != expected_count:
+            fail(errors, f"Expected {expected_count} groups for {warning_name}, found {actual}.")
+    teleport_species = {hazard.get("pokemon") for hazard in all_hazards if hazard.get("name") == "Teleport"}
+    if teleport_species != {"Abra", "Natu", "Ralts"}:
+        fail(errors, f"Unexpected Teleport species coverage: {sorted(teleport_species)}")
+    sticky_species = {hazard.get("pokemon") for hazard in all_hazards if hazard.get("name") == "Sticky Barb"}
+    if sticky_species != {"Cacnea", "Cacturne", "Ferroseed", "Ferrothorn"}:
+        fail(errors, f"Unexpected Sticky Barb species coverage: {sorted(sticky_species)}")
+    for unverified_name in ("Healing Wish", "Dry Skin", "Solar Power"):
+        rows = [hazard for hazard in all_hazards if hazard.get("name") == unverified_name]
+        if not rows or any(row.get("severity") != "preparation" or row.get("verificationStatus") != "needs-in-game-test" for row in rows):
+            fail(errors, f"{unverified_name} must remain a preparation-level, needs-verification warning.")
+    for excluded_name in ("Roar", "Whirlwind", "Dragon Tail", "Circle Throw", "Destiny Bond"):
+        if any(hazard.get("name") == excluded_name for hazard in all_hazards):
+            fail(errors, f"Unverified mechanic {excluded_name} was added as a confirmed hazard.")
+    if any(hazard.get("name") == "Perish Song" for group in groups if "Horde" in str(group.get("method")) for hazard in group.get("hazards", [])):
+        fail(errors, "Perish Song warnings leaked back into explicit horde methods.")
     if safari_hazard_groups:
         fail(errors, f"Safari methods must not contain battle hazards; found {len(safari_hazard_groups)} groups.")
     if len(slowdown_groups) != 6271:

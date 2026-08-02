@@ -677,6 +677,7 @@ html[data-theme="dark"] .inline-form input::placeholder { color: #aebdb3; opacit
 }
 .safety-badge.critical,.safety-badge.redirect { background:#ffd0d0; color:#701d1d; }
 .safety-badge.warning { background:#ffe2a8; color:#4b3210; }
+.safety-badge.preparation { background:#e8e0ff; color:#35205f; }
 .safety-badge.slowdown { background:#dceaff; color:#17324f; }
 .safety-badge.coverage { background:#e4ddff; color:#31205c; }
 .safety-badge.safari-capture { background:#d7f4df; color:#154b2b; }
@@ -689,6 +690,7 @@ html[data-theme="dark"] .inline-form input::placeholder { color: #aebdb3; opacit
 }
 .poke-warning { right:-7px; background:#ffe2a8; color:#4b3210; }
 .poke-warning.critical { background:#ffd0d0; color:#701d1d; }
+.poke-warning.preparation { background:#e8e0ff; color:#35205f; }
 .poke-slow { left:-7px; background:#dceaff; }
 .poke-slow img { width:14px; height:14px; }
 .poke-chip.unknown { background:#eee7d7; border-style:dashed; }
@@ -696,8 +698,15 @@ html[data-theme="dark"] .inline-form input::placeholder { color: #aebdb3; opacit
 .safety-list { display:grid; gap:9px; }
 .safety-row { display:grid; gap:3px; padding:10px 12px; border:2px solid var(--line); background:#fff4d8; }
 .safety-row.critical { background:#ffdada; }
+.safety-row.preparation { background:#eee8ff; }
 .safety-row.slowdown { background:#e3eeff; }
 .safety-row span,.safety-row small { font-size:.76rem; }
+.hazard-category,.verification-status {
+  display:inline-flex; margin-left:6px; padding:2px 5px; border:1px solid currentColor;
+  font-size:.58rem; font-style:normal; font-weight:900; text-transform:uppercase; vertical-align:middle;
+}
+.verification-status.needs-in-game-test { background:#fff1bd; color:#5b3b00; }
+.verification-status.community-documented { background:#dceaff; color:#17324f; }
 .raw-table td:first-child { position:relative; }
 .raw-table td .unknown-sprite { width:28px; height:28px; margin-right:6px; }
 html[data-theme="dark"] .safety-badge.critical,
@@ -705,11 +714,16 @@ html[data-theme="dark"] .safety-badge.redirect,
 html[data-theme="dark"] .poke-warning.critical { background:#4a1b1b; color:#ffd6d6; border-color:#f2a0a0; }
 html[data-theme="dark"] .safety-badge.warning,
 html[data-theme="dark"] .poke-warning { background:#4a3715; color:#ffe4a6; border-color:#ffd17a; }
+html[data-theme="dark"] .safety-badge.preparation,
+html[data-theme="dark"] .poke-warning.preparation { background:#30264f; color:#e5dcff; border-color:#b9a7ff; }
 html[data-theme="dark"] .safety-badge.slowdown,
 html[data-theme="dark"] .poke-slow { background:#17324f; color:#dceaff; border-color:#9fc6ee; }
 html[data-theme="dark"] .safety-badge.coverage { background:#30264f; color:#e5dcff; border-color:#b9a7ff; }
 html[data-theme="dark"] .safety-badge.safari-capture { background:#173726; color:#bfe8cb; border-color:#6fbd89; }
 html[data-theme="dark"] .safety-row { background:#3b3018; color:#fff1c8; }
 html[data-theme="dark"] .safety-row.critical { background:#401b1b; color:#ffdada; }
+html[data-theme="dark"] .safety-row.preparation { background:#30264f; color:#eee8ff; }
 html[data-theme="dark"] .safety-row.slowdown { background:#17324f; color:#dceaff; }
+html[data-theme="dark"] .verification-status.needs-in-game-test { background:#4a3715; color:#ffe4a6; }
+html[data-theme="dark"] .verification-status.community-documented { background:#17324f; color:#dceaff; }
 html[data-theme="dark"] .poke-chip.unknown { background:#342f27; color:#f3eadb; }
