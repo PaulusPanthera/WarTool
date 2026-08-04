@@ -1,11 +1,7 @@
-WARtool v0.8.11 safety-audit patch
+WARtool v0.8.12 update patch
 
-Required base: WARtool v0.8.10
+Apply this patch over WARtool v0.8.11.
+Copy everything inside the ZIP into the connected WarTool repository folder and replace matching files.
 
-Copy everything inside this ZIP into the existing connected WarTool repository
-folder and replace matching files.
-
-Suggested GitHub Desktop commit:
-Fix shiny-safety audit findings v0.8.11
-
-Then Push origin and confirm the GitHub Action finishes green.
+Suggested commit:
+Add player leaderboards and automatic time filters v0.8.12

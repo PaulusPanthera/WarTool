@@ -209,12 +209,26 @@ def main() -> int:
     slowed_rows = [group for group in groups if "(Slowed)" in str(group.get("method", ""))]
     if slowed_rows:
         fail(errors, f"Found {len(slowed_rows)} duplicate slowed hunt rows; slowdown alternatives must stay inside the base hunt card.")
-    if meta.get("siteVersion") != "0.8.11":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.11'.")
-    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.11":
-        fail(errors, "VERSION.txt is not 0.8.11.")
-    if "WARtool v0.8.11" not in index_text or 'APP_VERSION = "0.8.11"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
-        fail(errors, "Public page and local server are not consistently versioned as 0.8.11.")
+    if meta.get("siteVersion") != "0.8.12":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.12'.")
+    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.12":
+        fail(errors, "VERSION.txt is not 0.8.12.")
+    if "WARtool v0.8.12" not in index_text or 'APP_VERSION = "0.8.12"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
+        fail(errors, "Public page and local server are not consistently versioned as 0.8.12.")
+    required_ui_tokens = (
+        'data-tab="players"',
+        'id="tab-players"',
+        'id="playerLeaderboards"',
+        'id="autoContextStatus"',
+        '<option value="auto" selected>Auto · current week</option>',
+        '<option value="auto" selected>Auto · current game time</option>',
+    )
+    for token in required_ui_tokens:
+        if token not in index_text:
+            fail(errors, f"v0.8.12 UI token is missing: {token}")
+    for token in ("function pokeMMOClock", "function assumedWarWeek", "function renderLeaderboards", "WAR_EVENT_START_UTC"):
+        if token not in app_text:
+            fail(errors, f"v0.8.12 application logic is missing: {token}")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 

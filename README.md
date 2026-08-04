@@ -1,4 +1,4 @@
-# WARtool v0.8.11
+# WARtool v0.8.12
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -46,6 +46,25 @@ TEAM_MORE_LIKE_IT_CSV_URL
 WAR_SETTINGS_CSV_URL
 ```
 
+
+
+## Player leaderboards
+
+The Players tab displays one leaderboard for each competition team. Every active
+roster member is included and ranked by scored points, then catch count, unique
+evolution lines and name. Team totals use the same duplicate, Alpha, Secret,
+Safari and first-line scoring logic as the Catches and Progress tabs.
+
+## Automatic week and game time
+
+Week and Time use automatic filters by default:
+
+- assumed event weeks are UTC blocks for Aug 1–7, 8–14, 15–21 and 22–28;
+- PokeMMO game time runs four times real time and is derived from UTC;
+- Morning is 04:00–10:59 GT, Day is 11:00–20:59 GT and Night is 21:00–03:59 GT;
+- the context label refreshes every 15 seconds and the rankings refresh when the
+  active period changes;
+- manual Week or Time selections remain available.
 
 ## Safari rotational estimates
 

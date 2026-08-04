@@ -18,7 +18,7 @@
   </script>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="manifest" href="site.webmanifest">
-  <link rel="stylesheet" href="css/styles.css?v=0.8.11">
+  <link rel="stylesheet" href="css/styles.css?v=0.8.12">
 </head>
 <body>
   <a class="skip-link" href="#app">Skip to content</a>
@@ -35,6 +35,7 @@
       <nav class="main-nav" aria-label="Main navigation">
         <button class="tab active" data-tab="rankings">Rankings</button>
         <button class="tab" data-tab="catches">Catches <span id="catchCountBadge" class="nav-badge">0</span></button>
+        <button class="tab" data-tab="players">Players</button>
         <button class="tab" data-tab="progress">Progress</button>
         <button class="tab" data-tab="settings">Settings</button>
         <button class="tab" data-tab="quality">Audit</button>
@@ -86,8 +87,8 @@
         </div>
         <div class="filters">
           <label class="field field-wide"><span>Search</span><input id="rankSearch" placeholder="Location or Pokémon"></label>
-          <label class="field"><span>Week</span><select id="rankWeek"><option value="">All weeks</option></select></label>
-          <label class="field"><span>Time</span><select id="rankTime"><option value="">All times</option><option value="Morning">Morning</option><option value="Day">Day</option><option value="Night">Night</option><option value="Any time">Any time only</option></select></label>
+          <label class="field"><span>Week</span><select id="rankWeek"><option value="auto" selected>Auto · current week</option><option value="">All weeks</option></select></label>
+          <label class="field"><span>Time</span><select id="rankTime"><option value="auto" selected>Auto · current game time</option><option value="">All times</option><option value="Morning">Morning</option><option value="Day">Day</option><option value="Night">Night</option><option value="Any time">Any time only</option></select></label>
           <label class="field"><span>Region</span><select id="rankRegion"><option value="">All regions</option></select></label>
           <label class="field"><span>Method</span><select id="rankMethod"><option value="">All methods</option></select></label>
           <label class="field"><span>Scoring</span><select id="rankMode"><option value="player">Selected player · live</option><option value="team">Team live</option><option value="fresh">Fresh event</option><option value="base">Base tier value</option><option value="duplicate">All duplicate</option></select></label>
@@ -96,6 +97,7 @@
           <label class="field"><span>Range</span><select id="rankRange"><option value="0.9">Top 90%</option><option value="0.8" selected>Top 80%</option><option value="0.7">Top 70%</option><option value="0.6">Top 60%</option><option value="0">Any score</option></select></label>
           <label class="field"><span>Show</span><select id="rankLimit"><option value="24">24</option><option value="50">50</option><option value="100" selected>100</option><option value="250">250</option><option value="500">500</option><option value="1000">1,000</option><option value="all">All</option></select></label>
         </div>
+        <div id="autoContextStatus" class="auto-context-status" aria-live="polite"></div>
       </section>
 
       <section id="bestHunt" class="best-hunt-wrap" aria-live="polite"></section>
@@ -162,6 +164,13 @@
       </details>
     </section>
 
+    <section id="tab-players" class="tab-page">
+      <header class="page-intro">
+        <div><span class="eyebrow">PLAYER POINTS</span><h1 class="page-title">Player Leaderboards</h1><p>Both competition teams, scored from the current catch data.</p></div>
+      </header>
+      <section id="playerLeaderboards" class="leaderboard-grid" aria-live="polite"></section>
+    </section>
+
     <section id="tab-progress" class="tab-page">
       <header class="page-intro">
         <div><span class="eyebrow">UNIQUE LINES</span><h1 class="page-title">Tier Progress</h1></div>
@@ -222,7 +231,7 @@
     </section>
   </main>
 
-  <footer class="site-footer"><span>WARtool v0.8.11</span><span>PokeMMO client data</span></footer>
+  <footer class="site-footer"><span>WARtool v0.8.12</span><span>PokeMMO client data</span></footer>
 
   <dialog id="spotDialog" class="spot-dialog">
     <form method="dialog"><button class="dialog-close" aria-label="Close">×</button></form>
@@ -231,12 +240,12 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="data/meta.js?v=0.8.11"></script>
-  <script src="data/pokemon.js?v=0.8.11"></script>
-  <script src="data/groups.js?v=0.8.11"></script>
-  <script src="data/live-config.js?v=0.8.11"></script>
-  <script src="data/roster.js?v=0.8.11"></script>
-  <script src="data/preview.js?v=0.8.11"></script>
-  <script src="js/app.js?v=0.8.11"></script>
+  <script src="data/meta.js?v=0.8.12"></script>
+  <script src="data/pokemon.js?v=0.8.12"></script>
+  <script src="data/groups.js?v=0.8.12"></script>
+  <script src="data/live-config.js?v=0.8.12"></script>
+  <script src="data/roster.js?v=0.8.12"></script>
+  <script src="data/preview.js?v=0.8.12"></script>
+  <script src="js/app.js?v=0.8.12"></script>
 </body>
 </html>

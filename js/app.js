@@ -9,6 +9,9 @@ const PACKAGED_ROSTER = window.WAR_ROSTER || [];
 const PACKAGED_PREVIEW_CATCHES = window.WAR_PREVIEW_CATCHES || [];
 const LIVE_STATE_URL = "data/live/state.json";
 const STATIC_STATE_REFRESH_MS = 60_000;
+const AUTO_CONTEXT_REFRESH_MS = 15_000;
+const WAR_EVENT_START_UTC = Date.UTC(2026, 7, 1, 0, 0, 0);
+const WAR_EVENT_END_UTC = Date.UTC(2026, 7, 29, 0, 0, 0);
 const TIER_POINTS = Object.freeze({0:50, 1:45, 2:40, 3:30, 4:15, 5:10, 6:5, 7:3});
 const ROTATIONAL_SETTING_KEYS = Object.freeze(["johtoSafariRotationalTier", "greatMarshRotationalTier"]);
 const SLOW_BASELINE_METHOD = Object.freeze({"5x Horde":"5x Horde (Slowed)", "3x Horde":"3x Horde (Slowed)"});
@@ -78,6 +81,8 @@ let lastLiveStateFingerprint = "";
 let saveTimer = null;
 let rankingObserver = null;
 let rankingRenderToken = 0;
+let autoContextTimer = null;
+let lastAutoContextKey = "";
 
 function normalize(value) {
   return String(value || "").trim().toLowerCase().replace(/[’]/g, "'").replace(/[^a-z0-9♀♂]+/g, "");
@@ -106,6 +111,57 @@ function formatCatchDate(item) {
 function localDateInputValue(date = new Date()) {
   const pad = n => String(n).padStart(2, "0");
   return `${date.getFullYear()}-${pad(date.getMonth()+1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+function pokeMMOClock(date = new Date()) {
+  const gameSeconds = ((date.getTime() / 1000) * 4) % 86400;
+  const normalized = (gameSeconds + 86400) % 86400;
+  const hour = Math.floor(normalized / 3600);
+  const minute = Math.floor((normalized % 3600) / 60);
+  const second = Math.floor(normalized % 60);
+  const totalMinutes = hour * 60 + minute;
+  const period = totalMinutes >= 4 * 60 && totalMinutes < 11 * 60
+    ? "Morning"
+    : totalMinutes >= 11 * 60 && totalMinutes < 21 * 60
+      ? "Day"
+      : "Night";
+  return { hour, minute, second, period, label: `${String(hour).padStart(2,"0")}:${String(minute).padStart(2,"0")}` };
+}
+function assumedWarWeek(date = new Date()) {
+  const timestamp = date.getTime();
+  if (timestamp < WAR_EVENT_START_UTC || timestamp >= WAR_EVENT_END_UTC) return "";
+  const weekNumber = Math.floor((timestamp - WAR_EVENT_START_UTC) / (7 * 86400000)) + 1;
+  return GROUPS.find(group => String(group.week).startsWith(`Week ${weekNumber} `))?.week || "";
+}
+function currentAutoContext(date = new Date()) {
+  const game = pokeMMOClock(date);
+  return { game, week: assumedWarWeek(date), time: game.period };
+}
+function updateAutoContextControls({ rerender = false } = {}) {
+  const context = currentAutoContext();
+  const weekSelect = $("#rankWeek");
+  const timeSelect = $("#rankTime");
+  const weekOption = weekSelect?.querySelector('option[value="auto"]');
+  const timeOption = timeSelect?.querySelector('option[value="auto"]');
+  if (weekOption) weekOption.textContent = context.week ? `Auto · ${context.week}` : "Auto · all weeks";
+  if (timeOption) timeOption.textContent = `Auto · ${context.time} · ${context.game.label} GT`;
+  const status = $("#autoContextStatus");
+  if (status) {
+    const weekLabel = context.week || "Outside assumed Aug 1–28 event window";
+    status.textContent = `Automatic context: ${weekLabel} · ${context.time} · ${context.game.label} in-game`;
+  }
+  const key = `${context.week}|${context.time}`;
+  const changed = key !== lastAutoContextKey;
+  lastAutoContextKey = key;
+  if (rerender && changed && (weekSelect?.value === "auto" || timeSelect?.value === "auto")) renderRankings();
+  return context;
+}
+function scheduleAutoContextRefresh() {
+  clearInterval(autoContextTimer);
+  updateAutoContextControls();
+  autoContextTimer = setInterval(() => updateAutoContextControls({ rerender: true }), AUTO_CONTEXT_REFRESH_MS);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) updateAutoContextControls({ rerender: true });
+  });
 }
 function uid(prefix = "id") {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
@@ -925,6 +981,7 @@ function activateTab(name) {
   location.hash = name;
   if (name === "rankings") renderRankings();
   if (name === "catches") renderCatches();
+  if (name === "players") renderLeaderboards();
   if (name === "progress") renderProgress();
   if (name === "settings") renderSettings();
   if (name === "quality") renderQuality();
@@ -966,6 +1023,7 @@ function initializeStaticUi() {
   const weekMap = new Map();
   GROUPS.forEach(g => weekMap.set(g.week, g.season));
   [...weekMap].sort((a,b) => a[0].localeCompare(b[0], undefined, {numeric:true})).forEach(([week,season]) => $("#rankWeek").add(new Option(`${week} · ${season}`, week)));
+  updateAutoContextControls();
   populateSelect("#rankRegion", GROUPS.flatMap(g => g.regions));
   populateSelect("#rankMethod", GROUPS.map(g => g.method));
   $("#pokemonList").innerHTML = POKEMON.map(p => `<option value="${escapeHtml(p.name)}"></option>`).join("");
@@ -985,11 +1043,12 @@ function groupLocationPresentation(group) {
   const preview = locations.slice(1,4).map(l => `${l.location} (${l.region})`).join(" · ");
   return { title: locations[0].location, subtitle: locations[0].region, alt: `+${locations.length - 1} alternatives${preview ? ` · ${preview}` : ""}` };
 }
-function rankingFilters(group, context) {
+function rankingFilters(group, context, autoContext = currentAutoContext()) {
   const query = normalize($("#rankSearch").value);
   if (query && !group._search.includes(query)) return false;
-  if ($("#rankWeek").value && group.week !== $("#rankWeek").value) return false;
-  const time = $("#rankTime").value;
+  const selectedWeek = $("#rankWeek").value === "auto" ? autoContext.week : $("#rankWeek").value;
+  if (selectedWeek && group.week !== selectedWeek) return false;
+  const time = $("#rankTime").value === "auto" ? autoContext.time : $("#rankTime").value;
   if (time === "Any time" && group.timeLabel !== "Any time") return false;
   if (time && time !== "Any time" && !group.times.includes(time)) return false;
   if ($("#rankRegion").value && !group.regions.includes($("#rankRegion").value)) return false;
@@ -1129,8 +1188,9 @@ function renderRankings() {
   const limitValue = $("#rankLimit").value || "100";
   const allMode = limitValue === "all";
   const numericLimit = Math.max(1, Number(limitValue) || 100);
+  const autoContext = currentAutoContext();
   const allMatches = GROUPS
-    .filter(group => rankingFilters(group, context))
+    .filter(group => rankingFilters(group, context, autoContext))
     .map(group => ({ group, score: scoreGroup(group, mode, playerId, context) }))
     .filter(row => row.score.encountersPerHour > 0)
     .sort((a,b) => b.score.pointsPerHour - a.score.pointsPerHour);
@@ -1273,7 +1333,9 @@ function openSpotDialog(group, mode, playerId) {
   $("#spotDialog").showModal();
 }
 function resetRankingFilters() {
-  ["rankSearch","rankWeek","rankTime","rankRegion","rankMethod","rankConfidence"].forEach(id => $("#"+id).value = "");
+  ["rankSearch","rankRegion","rankMethod","rankConfidence"].forEach(id => $("#"+id).value = "");
+  $("#rankWeek").value = "auto";
+  $("#rankTime").value = "auto";
   $("#rankMode").value = "player";
   $("#rankRange").value = "0.8";
   $("#rankLimit").value = "100";
@@ -1355,6 +1417,42 @@ function tierRowsHtml(itemsByTier, options = {}) {
         }).join("")
       : `<span class="tier-empty">${caughtBoard ? "—" : "No matching evolution lines."}</span>`;
     return `<section class="tier-row" data-tier="${tier}"><div class="tier-label">T${tier}<small>${points} points</small></div><div class="tier-cell">${content}</div></section>`;
+  }).join("");
+}
+
+function leaderboardRows(team) {
+  const context = getCatchContext(team.id);
+  const catches = activeCatches(team.id);
+  const catchCounts = new Map();
+  const lineSets = new Map();
+  for (const item of catches) {
+    catchCounts.set(item.playerId, (catchCounts.get(item.playerId) || 0) + 1);
+    const pokemon = pokemonById.get(Number(item.pokemonId));
+    if (!pokemon) continue;
+    const lines = lineSets.get(item.playerId) || new Set();
+    lines.add(item.line || pokemon.line);
+    lineSets.set(item.playerId, lines);
+  }
+  return allPlayers(team.id).map(player => ({
+    player,
+    points: Number(context.playerTotals.get(player.id) || 0),
+    catches: Number(catchCounts.get(player.id) || 0),
+    lines: Number(lineSets.get(player.id)?.size || 0),
+  })).sort((a,b) => b.points - a.points || b.catches - a.catches || b.lines - a.lines || a.player.name.localeCompare(b.player.name));
+}
+function renderLeaderboards() {
+  const teams = allTeams();
+  const container = $("#playerLeaderboards");
+  if (!container) return;
+  container.innerHTML = teams.map(team => {
+    const context = getCatchContext(team.id);
+    const rows = leaderboardRows(team);
+    const teamCatches = activeCatches(team.id).length;
+    const body = rows.length ? rows.map((row,index) => {
+      const rankClass = index < 3 ? ` top-${index + 1}` : "";
+      return `<div class="leaderboard-row${rankClass}"><span class="leader-rank">#${index + 1}</span><strong>${escapeHtml(row.player.name)}</strong><span class="leader-stat"><b>${formatNumber(row.points,0)}</b><small>points</small></span><span class="leader-stat"><b>${row.catches}</b><small>catches</small></span><span class="leader-stat"><b>${row.lines}</b><small>lines</small></span></div>`;
+    }).join("") : '<div class="empty-state">No players available.</div>';
+    return `<article class="panel leaderboard-card ${team.id === selectedTeamId() ? "selected" : ""}"><div class="panel-heading leaderboard-heading"><div><span class="panel-kicker">${escapeHtml(team.name)}</span><h2>Player leaderboard</h2></div><div class="leaderboard-team-total"><strong>${formatNumber(context.teamTotal,0)}</strong><small>${teamCatches} catches</small></div></div><div class="leaderboard-columns" aria-hidden="true"><span>Rank</span><span>Player</span><span>Points</span><span>Catches</span><span>Lines</span></div><div class="leaderboard-rows">${body}</div></article>`;
   }).join("");
 }
 
@@ -1584,6 +1682,7 @@ function renderAll() {
   refreshPlayerSelects();
   renderRankings();
   renderCatches();
+  renderLeaderboards();
   renderProgress();
   renderSettings();
   renderQuality();
@@ -1652,13 +1751,14 @@ async function start() {
   initializeStaticUi();
   bindEvents();
   const requested = location.hash.replace("#", "");
-  if (["rankings","catches","progress","settings","quality"].includes(requested)) activateTab(requested);
+  if (["rankings","catches","players","progress","settings","quality"].includes(requested)) activateTab(requested);
   else activateTab("rankings");
   setTheme(currentTheme());
   renderAll();
   await loadStaticLiveState();
   renderAll();
   scheduleStaticLiveStateRefresh();
+  scheduleAutoContextRefresh();
 }
 
 start().catch(error => {

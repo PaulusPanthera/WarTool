@@ -727,3 +727,72 @@ html[data-theme="dark"] .safety-row.slowdown { background:#17324f; color:#dceaff
 html[data-theme="dark"] .verification-status.needs-in-game-test { background:#4a3715; color:#ffe4a6; }
 html[data-theme="dark"] .verification-status.community-documented { background:#17324f; color:#dceaff; }
 html[data-theme="dark"] .poke-chip.unknown { background:#342f27; color:#f3eadb; }
+
+
+/* v0.8.12 automatic context and player leaderboards */
+.auto-context-status {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 2px dashed var(--line);
+  color: var(--muted);
+  font-size: .74rem;
+  font-weight: 800;
+}
+.leaderboard-grid {
+  display: grid;
+  grid-template-columns: repeat(2,minmax(0,1fr));
+  gap: 22px;
+  align-items: start;
+}
+.leaderboard-card { padding: 0; overflow: hidden; }
+.leaderboard-card.selected { outline: 4px solid var(--yellow); outline-offset: -4px; }
+.leaderboard-heading { padding: 18px 18px 14px; margin: 0; border-bottom: 3px solid var(--ink); }
+.leaderboard-heading h2 { margin-bottom: 0; }
+.leaderboard-team-total { text-align: right; }
+.leaderboard-team-total strong { display: block; color: var(--green); font-size: 1.5rem; }
+.leaderboard-team-total small { color: var(--muted); }
+.leaderboard-columns,
+.leaderboard-row {
+  display: grid;
+  grid-template-columns: 52px minmax(120px,1fr) 86px 72px 58px;
+  gap: 8px;
+  align-items: center;
+}
+.leaderboard-columns {
+  padding: 8px 14px;
+  color: var(--muted);
+  background: var(--paper-3);
+  border-bottom: 2px solid var(--line);
+  font-size: .62rem;
+  font-weight: 900;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.leaderboard-columns span:nth-child(n+3) { text-align: right; }
+.leaderboard-rows { display: grid; }
+.leaderboard-row {
+  min-height: 54px;
+  padding: 8px 14px;
+  border-bottom: 2px solid var(--line);
+  background: var(--paper);
+}
+.leaderboard-row:last-child { border-bottom: 0; }
+.leaderboard-row.top-1 { background: #fff2ad; }
+.leaderboard-row.top-2 { background: #e8ece9; }
+.leaderboard-row.top-3 { background: #f2d1ae; }
+.leader-rank { font-weight: 900; }
+.leader-stat { text-align: right; }
+.leader-stat b, .leader-stat small { display: block; }
+.leader-stat small { color: var(--muted); font-size: .58rem; text-transform: uppercase; }
+html[data-theme="dark"] .leaderboard-row.top-1 { background: #4a4424; }
+html[data-theme="dark"] .leaderboard-row.top-2 { background: #35413b; }
+html[data-theme="dark"] .leaderboard-row.top-3 { background: #493829; }
+@media (max-width: 1100px) {
+  .leaderboard-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 620px) {
+  .leaderboard-columns { display: none; }
+  .leaderboard-row { grid-template-columns: 42px minmax(110px,1fr) 70px 58px; }
+  .leader-stat:last-child { display: none; }
+  .leaderboard-heading { align-items: flex-start; flex-direction: row; }
+}
