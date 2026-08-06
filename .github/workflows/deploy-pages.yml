@@ -34,20 +34,11 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v6
         with:
-          node-version: "24"
+          node-version: "22"
           package-manager-cache: false
 
       - name: Configure GitHub Pages
-        id: pages
-        uses: actions/configure-pages@v6
-
-      - name: Show current Pages configuration
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          echo "Repository Pages configuration:"
-          gh api "repos/${GITHUB_REPOSITORY}/pages" --jq '{html_url, build_type, source, status}' || true
+        uses: actions/configure-pages@v5
 
       - name: Import live Google Sheet data
         env:
@@ -76,14 +67,12 @@ jobs:
           fi
           file_count="$(find _site -type f | wc -l)"
           byte_count="$(du -sb _site | cut -f1)"
-          largest_file="$(find _site -type f -printf '%s %p\n' | sort -nr | head -n 1)"
           echo "Artifact files: ${file_count}"
           echo "Artifact bytes: ${byte_count}"
-          echo "Largest file: ${largest_file}"
           test "${byte_count}" -lt 1073741824
 
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@v4
         with:
           path: _site
 
@@ -96,15 +85,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@v4
         with:
-          # WARtool is about 60 MB unpacked. Give the Pages backend enough time
-          # during periods of elevated deployment latency before cancelling it.
-          timeout: 1800000
-          error_count: 60
-          reporting_interval: 10000
+          timeout: 900000

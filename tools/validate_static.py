@@ -733,15 +733,15 @@ def main() -> int:
     if "group: pages" not in workflow_text or "cancel-in-progress: false" not in workflow_text:
         fail(errors, "Pages workflow must serialize deployments without cancelling an active deployment.")
     required_pages_actions = (
-        "actions/configure-pages@v6",
-        "actions/upload-pages-artifact@v5",
-        "actions/deploy-pages@v5",
+        "actions/configure-pages@v5",
+        "actions/upload-pages-artifact@v4",
+        "actions/deploy-pages@v4",
     )
     for action in required_pages_actions:
         if action not in workflow_text:
-            fail(errors, f"Pages workflow must use current Node 24 action {action}.")
-    if "timeout: 1800000" not in workflow_text:
-        fail(errors, "Pages deployment recovery timeout must remain 30 minutes.")
+            fail(errors, f"Pages workflow must use the supported official action {action}.")
+    if "timeout: 900000" not in workflow_text:
+        fail(errors, "Pages deployment timeout must remain 15 minutes.")
 
     if live.get("schemaVersion") != 1:
         fail(errors, f"Live-state schemaVersion must be 1, found {live.get('schemaVersion')!r}")
