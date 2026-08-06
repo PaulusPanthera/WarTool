@@ -732,6 +732,16 @@ def main() -> int:
         fail(errors, "Expected supported live-data refresh schedule is missing from the workflow.")
     if "group: pages" not in workflow_text or "cancel-in-progress: false" not in workflow_text:
         fail(errors, "Pages workflow must serialize deployments without cancelling an active deployment.")
+    required_pages_actions = (
+        "actions/configure-pages@v6",
+        "actions/upload-pages-artifact@v5",
+        "actions/deploy-pages@v5",
+    )
+    for action in required_pages_actions:
+        if action not in workflow_text:
+            fail(errors, f"Pages workflow must use current Node 24 action {action}.")
+    if "timeout: 1800000" not in workflow_text:
+        fail(errors, "Pages deployment recovery timeout must remain 30 minutes.")
 
     if live.get("schemaVersion") != 1:
         fail(errors, f"Live-state schemaVersion must be 1, found {live.get('schemaVersion')!r}")

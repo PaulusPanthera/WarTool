@@ -1,16 +1,16 @@
-WARtool v0.8.14 repair patch
+WARtool v0.8.14 GitHub Pages recovery patch
 
-Apply this patch over the current WARtool v0.8.13 repository.
-Copy everything inside the ZIP into the connected WarTool repository folder and replace matching files.
+Contains only:
+- .github/workflows/deploy-pages.yml
+- tools/validate_static.py
+- WARtool_v0.8.14_Pages_Recovery_Audit.md
 
-Changes:
-- separate Old Rod, Good Rod and Super Rod throughout the ranking data and UI
-- build Rod + Lure as 95% selected rod table + 5% Water Lure-exclusive slot
-- keep Safari rods separate and keep Chum variants tied to the selected rod
-- repair the v0.8.13 validator/version failure
-- show total points and no-species-bonus points as separate leaderboard columns
-- exclude only the team-first species/evolution-line bonus from that secondary score
-- add rod, Lure provenance and leaderboard scoring regression checks
+Apply:
+1. Copy these files into the connected WarTool repository.
+2. Replace the two existing matching files.
+3. Commit: Upgrade Pages deployment actions and recovery checks
+4. Push origin once.
+5. Do not re-run any older failed workflow run.
 
-Suggested commit:
-Fix rod methods and leaderboard update v0.8.14
+The new push creates a fresh commit SHA and a fresh Pages deployment.
+Repository Settings > Pages > Source must be GitHub Actions.
