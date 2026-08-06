@@ -5,8 +5,8 @@ on:
     branches: [main]
   workflow_dispatch:
   schedule:
-    # Every five minutes, offset from minute 0 to reduce scheduler congestion.
-    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
+    # Every 15 minutes, offset from minute 0 to reduce scheduler congestion.
+    - cron: "7,22,37,52 * * * *"
 
 permissions:
   contents: read
@@ -14,9 +14,10 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  # Do not cancel a deployment just because the next five-minute run started.
-  cancel-in-progress: false
+  # Keep only the newest WARtool deployment request. This prevents queued
+  # five-minute refreshes from competing inside GitHub Pages.
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -61,13 +62,19 @@ jobs:
           path: _site
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     needs: build
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          # GitHub's default is 10 minutes. Give a slow Pages backend more room.
+          timeout: 900000
