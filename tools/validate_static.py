@@ -721,12 +721,17 @@ def main() -> int:
     workflow_text = (ROOT / ".github/workflows/deploy-pages.yml").read_text(encoding="utf-8")
     if "schedule:" not in workflow_text or "tools/import_google_sheet.py" not in workflow_text:
         fail(errors, "GitHub Pages workflow is not wired to the scheduled Google Sheet importer.")
-    accepted_five_minute_schedules = (
+    accepted_live_refresh_schedules = (
+        # Current release: every 15 minutes.
+        "7,22,37,52 * * * *",
+        # Older supported schedules retained so local historical copies still validate.
         "2-57/5 * * * *",
         "2,7,12,17,22,27,32,37,42,47,52,57 * * * *",
     )
-    if not any(schedule in workflow_text for schedule in accepted_five_minute_schedules):
-        fail(errors, "Expected five-minute live-data schedule is missing from the workflow.")
+    if not any(schedule in workflow_text for schedule in accepted_live_refresh_schedules):
+        fail(errors, "Expected supported live-data refresh schedule is missing from the workflow.")
+    if "group: pages" not in workflow_text or "cancel-in-progress: false" not in workflow_text:
+        fail(errors, "Pages workflow must serialize deployments without cancelling an active deployment.")
 
     if live.get("schemaVersion") != 1:
         fail(errors, f"Live-state schemaVersion must be 1, found {live.get('schemaVersion')!r}")
