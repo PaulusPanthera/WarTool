@@ -729,7 +729,7 @@ html[data-theme="dark"] .verification-status.community-documented { background:#
 html[data-theme="dark"] .poke-chip.unknown { background:#342f27; color:#f3eadb; }
 
 
-/* v0.8.13 automatic context and player leaderboards */
+/* v0.8.14 automatic context, player leaderboards and rod methods */
 .auto-context-status {
   margin-top: 12px;
   padding-top: 10px;
@@ -748,13 +748,17 @@ html[data-theme="dark"] .poke-chip.unknown { background:#342f27; color:#f3eadb; 
 .leaderboard-card.selected { outline: 4px solid var(--yellow); outline-offset: -4px; }
 .leaderboard-heading { padding: 18px 18px 14px; margin: 0; border-bottom: 3px solid var(--ink); }
 .leaderboard-heading h2 { margin-bottom: 0; }
-.leaderboard-team-total { text-align: right; }
+.leaderboard-team-total { display: flex; gap: 18px; align-items: flex-start; text-align: right; }
+.leaderboard-team-total span { display: block; min-width: 92px; }
 .leaderboard-team-total strong { display: block; color: var(--green); font-size: 1.5rem; }
-.leaderboard-team-total small { color: var(--muted); }
+.leaderboard-team-total small { display: block; color: var(--muted); font-size: .64rem; font-weight: 900; text-transform: uppercase; }
+.leaderboard-team-total .no-species strong, .leader-stat.no-species b { color: #5146a8; }
+html[data-theme="dark"] .leaderboard-team-total .no-species strong,
+html[data-theme="dark"] .leader-stat.no-species b { color: #c3baff; }
 .leaderboard-columns,
 .leaderboard-row {
   display: grid;
-  grid-template-columns: 52px minmax(120px,1fr) 86px 72px 58px;
+  grid-template-columns: 52px minmax(112px,1fr) 76px 112px 68px 58px;
   gap: 8px;
   align-items: center;
 }
@@ -792,7 +796,8 @@ html[data-theme="dark"] .leaderboard-row.top-3 { background: #493829; }
 }
 @media (max-width: 620px) {
   .leaderboard-columns { display: none; }
-  .leaderboard-row { grid-template-columns: 42px minmax(110px,1fr) 70px 58px; }
-  .leader-stat:last-child { display: none; }
-  .leaderboard-heading { align-items: flex-start; flex-direction: row; }
+  .leaderboard-row { grid-template-columns: 42px minmax(96px,1fr) 62px 86px; }
+  .leaderboard-row > :nth-child(5), .leaderboard-row > :nth-child(6) { display: none; }
+  .leaderboard-heading { align-items: flex-start; flex-direction: column; gap: 12px; }
+  .leaderboard-team-total { width: 100%; justify-content: space-between; text-align: left; }
 }

@@ -1,4 +1,4 @@
-# WARtool v0.8.13
+# WARtool v0.8.14
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -52,9 +52,9 @@ WAR_SETTINGS_CSV_URL
 
 The Players tab displays one leaderboard for each competition team. Every active
 roster member is included and ranked by scored points, then catch count, unique
-evolution lines and name. Each player and team total also shows **no-bonus
-points**, which exclude the first evolution-line, Secret Shiny and Safari
-bonuses while retaining the normal Alpha, Egg and duplicate base-point rules.
+evolution lines and name. Each player and team total also shows **no species bonus** points. This removes
+only the team-first species/evolution-line bonus. Secret Shiny and Safari
+bonuses, plus the normal Alpha, Egg and duplicate rules, still count.
 
 ## Automatic week and game time
 
@@ -72,6 +72,15 @@ Week and Time use automatic filters by default:
 The ranking data was rebuilt from `dump(10).zip`, exported on 2026-08-06. The
 rebuild keeps the new location and Lure tables while removing encounter rows
 that disappeared from the client dump.
+
+## Fishing rods and Lure variants
+
+Old Rod, Good Rod and Super Rod are separate ranked methods and are displayed
+directly on every fishing hunt. Rod + Lure uses 95% of the selected rod table
+plus the location's modeled 5% Water Lure-exclusive slot; it no longer replaces
+the rod table with the surfing pool. Chum Bucket variants keep the same selected
+rod composition and use the existing editable fishing-speed settings. Safari
+rod tables remain separate as well.
 
 ## Safari rotational estimates
 

@@ -42,6 +42,20 @@ KNOWN_TYPES = (
     "Honey Tree", "Dust Cloud", "Headbutt", "Fishing", "Shadow",
     "Inside", "Grass", "Cave", "Water", "Rocks",
 )
+ROD_TYPES = ("Old Rod", "Good Rod", "Super Rod")
+
+
+def rod_method(encounter_type: str, safari: bool) -> str:
+    return f"Safari {encounter_type}" if safari else encounter_type
+
+
+def rod_type_from_method(method: str) -> str | None:
+    candidate = method.removeprefix("Safari ").split(" + ", 1)[0]
+    return candidate if candidate in ROD_TYPES else None
+
+
+def is_rod_method(method: str) -> bool:
+    return rod_type_from_method(method) is not None
 FOSSILS = (
     (138, "Kanto", "Cinnabar Island Lab"),
     (140, "Kanto", "Cinnabar Island Lab"),
@@ -153,13 +167,14 @@ def classify_method(location: dict[str, Any]) -> str | None:
         return "5x Horde"
     if location.get("is_horde_3x"):
         return "3x Horde"
-    if is_safari(location):
-        return "Safari Singles"
     encounter_type = canonical_type(location.get("type"))
+    safari_here = is_safari(location)
+    if encounter_type in ROD_TYPES:
+        return rod_method(encounter_type, safari_here)
+    if safari_here:
+        return "Safari Singles"
     if encounter_type in {"Grass", "Cave", "Inside", "Water", "Dark Grass"}:
         return "Singles"
-    if encounter_type in {"Old Rod", "Good Rod", "Super Rod"}:
-        return "Fishing"
     if encounter_type == "Rocks":
         return "Rock Smash"
     if encounter_type == "Headbutt":
@@ -173,6 +188,8 @@ def component_key(components: list[dict[str, Any]]) -> tuple[Any, ...]:
             int(item["pokemonId"]), round(float(item["share"]), 12),
             int(item["tier"]), int(item["points"]), item["line"],
             bool(item.get("lureExclusive")), bool(item.get("unknown")),
+            round(float(item.get("baseShare", 0) or 0), 12),
+            round(float(item.get("lureShare", 0) or 0), 12),
             tuple((h.get("name"), h.get("category"), h.get("kind"), h.get("severity"), h.get("verificationStatus"), h.get("levelRange")) for h in item.get("hazards", [])),
             tuple(item.get("slowAbilities", [])),
             (
@@ -338,6 +355,8 @@ def build_raw_groups(
             for component in components:
                 item = dict(component)
                 item["share"] *= 0.95
+                item["baseShare"] = item["share"]
+                item["lureShare"] = 0.0
                 item["rawRate"] = None
                 combined[item["pokemonId"]] = item
             unique_lure = {item[0]["pokemonId"]: dict(item[0]) for item in lure_entries}
@@ -345,8 +364,11 @@ def build_raw_groups(
             for item in unique_lure.values():
                 if item["pokemonId"] in combined:
                     combined[item["pokemonId"]]["share"] += lure_share
+                    combined[item["pokemonId"]]["lureShare"] = float(combined[item["pokemonId"]].get("lureShare", 0)) + lure_share
                 else:
                     item["share"] = lure_share
+                    item["baseShare"] = 0.0
+                    item["lureShare"] = lure_share
                     item["rawRate"] = None
                     item["lureExclusive"] = True
                     combined[item["pokemonId"]] = item
@@ -422,34 +444,172 @@ def merge_alternative_locations(rows: list[dict[str, Any]]) -> list[dict[str, An
     return merged
 
 
+def build_lure_slot_map(
+    monsters: list[dict[str, Any]], pokemon_by_id: dict[int, dict[str, Any]], safari_rates: dict[str, Any]
+) -> dict[tuple[Any, ...], list[dict[str, Any]]]:
+    """Collect the 5% water Lure-exclusive slot by exact location/season/time.
+
+    The dump stores these rows under the Water encounter type even when the
+    player is fishing. Rod + Lure variants therefore need to join the selected
+    rod table with the location's Water Lure slot rather than replacing the rod
+    table with the surfing table.
+    """
+    grouped: dict[tuple[Any, ...], dict[int, dict[str, Any]]] = collections.defaultdict(dict)
+    for monster in monsters:
+        pokemon_id = int(monster["id"])
+        pokemon = pokemon_by_id.get(pokemon_id)
+        if pokemon is None:
+            continue
+        for original in monster.get("locations", []):
+            location = dict(original)
+            location["region_name"] = canonical_region(location.get("region_name"))
+            location["type"] = canonical_type(location.get("type"))
+            safari_here = is_safari(location)
+            location["location_name_full"] = normalize_safari_location(
+                location["region_name"], int(location.get("location_id", 0)), str(location.get("location_name_full", ""))
+            )
+            location["type"] = normalize_safari_type(location["region_name"], location["type"], safari_here)
+            if location["type"] != "Water":
+                continue
+            seasons = SEASONS if location.get("season") == "Any" else (location.get("season"),)
+            for season in seasons:
+                for time_name, field in TIME_FIELDS:
+                    if location.get(field) != "Lure":
+                        continue
+                    key = (
+                        location["region_name"], int(location.get("location_id", 0)),
+                        location["location_name_full"], season, time_name,
+                    )
+                    component = grouped[key].get(pokemon_id)
+                    if component is None:
+                        component = {
+                            "pokemonId": pokemon_id, "pokemon": monster["name"],
+                            "tier": int(pokemon["tier"]), "points": int(pokemon["points"]),
+                            "line": pokemon["line"], "lureExclusive": True, "rawRate": None,
+                            "minLevel": int(location.get("min_level", 0) or 0),
+                            "maxLevel": int(location.get("max_level", 0) or 0),
+                        }
+                        if safari_here:
+                            component["safariCapture"] = safari_capture_for(
+                                safari_rates, location["region_name"], pokemon_id
+                            )
+                        grouped[key][pokemon_id] = component
+                    else:
+                        component["minLevel"] = min(int(component.get("minLevel", 0)), int(location.get("min_level", 0) or 0))
+                        component["maxLevel"] = max(int(component.get("maxLevel", 0)), int(location.get("max_level", 0) or 0))
+    return {key: sorted(values.values(), key=lambda item: item["pokemon"]) for key, values in grouped.items()}
+
+
+def rod_lure_components(
+    base_components: list[dict[str, Any]], lure_components: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    if not lure_components:
+        return []
+    combined: dict[int, dict[str, Any]] = {}
+    for component in base_components:
+        item = copy.deepcopy(component)
+        base_share = float(component.get("share", 0)) * 0.95
+        item.update({
+            "share": base_share, "shownWeight": base_share, "rawRate": None,
+            "baseShare": base_share, "lureShare": 0.0, "lureExclusive": False,
+            "sources": [{"eventRate": base_share, "count": 1, "label": "Selected rod table"}],
+        })
+        combined[int(item["pokemonId"])] = item
+
+    each = 0.05 / len(lure_components)
+    for component in lure_components:
+        pid = int(component["pokemonId"])
+        if pid in combined:
+            item = combined[pid]
+            item["share"] = float(item.get("share", 0)) + each
+            item["shownWeight"] = float(item.get("shownWeight", 0)) + each
+            item["lureShare"] = float(item.get("lureShare", 0)) + each
+            item.setdefault("sources", []).append({"eventRate": each, "count": 1, "label": "Lure-exclusive encounter"})
+            item["minLevel"] = min(int(item.get("minLevel", 0)), int(component.get("minLevel", 0)))
+            item["maxLevel"] = max(int(item.get("maxLevel", 0)), int(component.get("maxLevel", 0)))
+        else:
+            item = copy.deepcopy(component)
+            item.update({
+                "share": each, "shownWeight": each, "rawRate": None,
+                "baseShare": 0.0, "lureShare": each, "lureExclusive": True,
+                "sources": [{"eventRate": each, "count": 1, "label": "Lure-exclusive encounter"}],
+            })
+            combined[pid] = item
+
+    total = sum(float(item.get("share", 0)) for item in combined.values())
+    if total <= 0:
+        return []
+    components = list(combined.values())
+    for item in components:
+        item["share"] = float(item["share"]) / total
+        item["shownWeight"] = float(item["share"])
+        item["baseShare"] = float(item.get("baseShare", 0)) / total
+        item["lureShare"] = float(item.get("lureShare", 0)) / total
+    components.sort(key=lambda item: (-float(item["share"]), item["pokemon"]))
+    return components
+
+
 def build_special_groups(
-    base_groups: list[dict[str, Any]], monsters: list[dict[str, Any]], pokemon_by_id: dict[int, dict[str, Any]]
+    base_groups: list[dict[str, Any]], monsters: list[dict[str, Any]],
+    lure_slots: dict[tuple[Any, ...], list[dict[str, Any]]],
+    pokemon_by_id: dict[int, dict[str, Any]]
 ) -> list[dict[str, Any]]:
     special: list[dict[str, Any]] = []
     for source in base_groups:
-        if source["method"] == "Fishing":
-            row = copy.deepcopy(source)
-            row["method"] = "Fishing + Chum Bucket"
-            row["confidence"] = "medium"
-            row["validation"].append({
+        method = str(source.get("method") or "")
+        rod = rod_type_from_method(method)
+        if not rod:
+            continue
+
+        # Chum changes the fishing pace, not the selected rod's species table.
+        if not source.get("safari"):
+            chum = copy.deepcopy(source)
+            chum["method"] = f"{method} + Chum Bucket"
+            chum["confidence"] = "medium"
+            chum["validation"].append({
                 "level": "assumption", "code": "chum-speed",
-                "message": "Uses the same rod encounter table. Chum effects are represented through the editable encounters/hour value.",
+                "message": f"Uses the same {rod} table. Chum effects are represented through the editable encounters/hour value.",
             })
-            special.append(row)
-        elif source["method"] == "Lure Singles" and source.get("lure"):
-            water_locations = [copy.deepcopy(item) for item in source["locations"] if "Water" in item.get("encounterTypes", [])]
-            if water_locations:
-                for method, code, message in (
-                    ("Fishing + Lure", "fishing-lure", "Uses the Water lure table. Lure-exclusive species occupy the modeled 5% slot; fishing speed is editable."),
-                    ("Fishing + Lure + Chum Bucket", "fishing-lure-chum", "Uses the Water lure table with the modeled 5% lure-exclusive slot. Chum is represented through the editable encounters/hour value."),
-                ):
-                    row = copy.deepcopy(source)
-                    row["method"] = method
-                    row["locations"] = water_locations
-                    row["regions"] = sorted({item["region"] for item in water_locations})
-                    row["confidence"] = "medium"
-                    row["validation"].append({"level": "assumption", "code": code, "message": message})
-                    special.append(row)
+            special.append(chum)
+
+        if len(source.get("locations", [])) != 1 or len(source.get("times", [])) != 1:
+            raise ValueError(f"Rod special generation expects one location and one time before collapse: {source}")
+        location = source["locations"][0]
+        slot_key = (
+            location["region"], int(location["locationId"]), location["location"],
+            source["season"], source["times"][0],
+        )
+        slot = lure_slots.get(slot_key, [])
+        lure_components = rod_lure_components(source["components"], slot)
+        if not lure_components:
+            continue
+
+        lure = copy.deepcopy(source)
+        lure["method"] = f"{method} + Lure"
+        lure["lure"] = True
+        lure["components"] = lure_components
+        lure["rawTotal"] = 1.0
+        lure["shownTotal"] = 1.0
+        lure["incomplete"] = False
+        lure["warning"] = ""
+        lure["confidence"] = "medium"
+        lure["validation"] = [
+            note for note in lure.get("validation", [])
+            if note.get("code") != "incomplete-table"
+        ] + [{
+            "level": "assumption", "code": "rod-lure-slot",
+            "message": f"Uses 95% of the selected {rod} table plus the location's modeled 5% Water Lure-exclusive slot.",
+        }]
+        special.append(lure)
+
+        if not source.get("safari"):
+            lure_chum = copy.deepcopy(lure)
+            lure_chum["method"] = f"{method} + Lure + Chum Bucket"
+            lure_chum["validation"].append({
+                "level": "assumption", "code": "rod-lure-chum-speed",
+                "message": "Chum keeps that rod-plus-Lure composition; its extra encounters are represented through the editable encounters/hour value.",
+            })
+            special.append(lure_chum)
 
     honey_rows: list[tuple[dict[str, Any], dict[str, Any], dict[str, Any]]] = []
     for monster in monsters:
@@ -528,7 +688,7 @@ def build_validation(
 ) -> dict[str, Any]:
     all_notes = [note for group in groups for note in group.get("validation", [])]
     summary = {
-        "rawVariants": raw_count + (len(groups) - len(base_groups)),
+        "rawVariants": raw_count,
         "locationTimeCollapsed": collapsed_count,
         "displayGroups": len(groups),
         "mergedGroups": sum(len(group.get("locations", [])) > 1 for group in groups),
@@ -549,20 +709,25 @@ def build_validation(
                 "locations": [f"{item['region']} · {item['location']}" for item in group["locations"]],
                 "notes": group["validation"],
             })
-    method_messages = {
-        "Fishing + Chum Bucket": "Rod table is unchanged; Chum is modeled through encounters/hour.",
-        "Fishing + Lure": "Uses Water lure compositions with the modeled lure-exclusive slot.",
-        "Fishing + Lure + Chum Bucket": "Uses Water lure compositions; Chum is modeled through encounters/hour.",
-        "Honey Tree": "Dex composition is exact; active encounters/hour excludes the tree waiting period.",
-        "Fossil": "Guaranteed species; speed is editable and wild-only event boost is excluded.",
-    }
-    for method, message in method_messages.items():
-        example = next((group for group in groups if group["method"] == method), None)
+    method_messages = (
+        (lambda method: rod_type_from_method(method) is not None and method.endswith("+ Chum Bucket") and "+ Lure" not in method,
+         "Rod + Chum Bucket", "The selected rod table is unchanged; Chum is modeled through encounters/hour."),
+        (lambda method: rod_type_from_method(method) is not None and method.endswith("+ Lure"),
+         "Rod + Lure", "Uses 95% of the selected rod table plus the location's 5% Water Lure-exclusive slot."),
+        (lambda method: rod_type_from_method(method) is not None and method.endswith("+ Lure + Chum Bucket"),
+         "Rod + Lure + Chum Bucket", "Keeps the rod-plus-Lure composition; Chum is modeled through encounters/hour."),
+        (lambda method: method == "Honey Tree",
+         "Honey Tree", "Dex composition is exact; active encounters/hour excludes the tree waiting period."),
+        (lambda method: method == "Fossil",
+         "Fossil", "Guaranteed species; speed is editable and wild-only event boost is excluded."),
+    )
+    for predicate, label, message in method_messages:
+        example = next((group for group in groups if predicate(str(group["method"]))), None)
         issues.append({
-            "groupId": example["id"] if example else 0, "method": method,
+            "groupId": example["id"] if example else 0, "method": label,
             "locations": [f"{item['region']} · {item['location']}" for item in (example["locations"] if example else [])],
             "notes": [{
-                "level": "assumption", "code": re.sub(r"[^a-z0-9]+", "-", method.lower()).strip("-"),
+                "level": "assumption", "code": re.sub(r"[^a-z0-9]+", "-", label.lower()).strip("-"),
                 "message": message,
             }],
         })
@@ -581,12 +746,16 @@ def main() -> int:
 
     raw_groups = build_raw_groups(monsters, pokemon_by_id, safari_rates)
     raw_groups = transform_random_tables(raw_groups)
+    lure_slots = build_lure_slot_map(monsters, pokemon_by_id, safari_rates)
+    # Rod variants must be created before location/time collapsing so each selected
+    # rod keeps the exact Water Lure slot for that location, season and time.
+    special_raw_groups = build_special_groups(raw_groups, monsters, lure_slots, pokemon_by_id)
     raw_groups = add_safety(raw_groups, monsters)
+    special_raw_groups = add_safety(special_raw_groups, monsters)
     collapsed = collapse_location_type_time(raw_groups)
+    special_collapsed = collapse_location_type_time(special_raw_groups)
     base_groups = merge_alternative_locations(collapsed)
-    special_groups = build_special_groups(base_groups, monsters, pokemon_by_id)
-    # Re-evaluate safety after special methods are created so Lure fishing doubles receive redirection warnings too.
-    special_groups = add_safety(special_groups, monsters)
+    special_groups = merge_alternative_locations(special_collapsed)
     groups = base_groups + special_groups
     groups.sort(key=lambda group: (
         group["week"], group["season"], group["method"],
@@ -598,13 +767,10 @@ def main() -> int:
     for index, group in enumerate(groups, start=1):
         group["id"] = index
 
-    # Re-select base rows after IDs have been assigned, so issue links are valid.
-    base_methods = {
-        "3x Horde", "5x Horde", "Lure Singles", "Singles", "Fishing",
-        "Safari Singles", "Headbutt", "Rock Smash", "Lure Safari Singles",
-    }
-    base_with_ids = [group for group in groups if group["method"] in base_methods]
-    validation = build_validation(groups, base_with_ids, len(raw_groups), len(collapsed))
+    raw_variant_count = len(raw_groups) + len(special_raw_groups)
+    collapsed_variant_count = len(collapsed) + len(special_collapsed)
+    # base_groups share object references with groups, so IDs are now available.
+    validation = build_validation(groups, base_groups, raw_variant_count, collapsed_variant_count)
 
     GROUPS_PATH.write_text(
         "window.WAR_GROUPS=" + json.dumps(groups, ensure_ascii=False, separators=(",", ":")) + ";\n" +
@@ -612,27 +778,28 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    incomplete_raw = sum(bool(group["incomplete"]) for group in raw_groups)
+    incomplete_raw = sum(bool(group["incomplete"]) for group in raw_groups + special_raw_groups)
     meta = {
         "monsters_in_dump": len(monsters),
         "tiered_species_ids": len(pokemon),
-        "ranking_variants": validation["summary"]["rawVariants"],
-        "complete_variants": len(raw_groups) - incomplete_raw,
+        "ranking_variants": raw_variant_count,
+        "complete_variants": raw_variant_count - incomplete_raw,
         "incomplete_variants": incomplete_raw,
         "methodology": {
             "hordes": "Normal 5% horde blocks and exact 100% early-route Sweet Scent-only tables are both normalized conditionally; near-100% rounding totals remain warnings.",
-            "lures": "Lure uses 95% of the complete random pool, including natural hordes and unknown Safari rotation slots, plus a 5% lure-exclusive roll.",
+            "lures": "Walking/surfing Lure uses 95% of the complete random pool plus a 5% lure-exclusive roll. Fishing Lure keeps 95% of the selected Old/Good/Super Rod table and adds the location's 5% Water Lure-exclusive slot.",
             "natural_hordes": "Ordinary walking, surfing and Safari tables include the natural 3×/5× horde roll and weight shares by individual Pokémon shown.",
             "special_tables": "Numeric encounter groups below 94% total are flagged incomplete and sorted after complete groups.",
             "safari": "Safari Zone Gate is a normal map. Johto Safari grass preserves a 10% unknown block/rotation slot; Great Marsh grass preserves a 20% unknown daily-rotation slot. The slot is unscored by default and can be assigned a tier in Settings. Expected points use species-specific community balls-only catch estimates for matched Johto/Great Marsh species, an editable fallback for unmatched/unknown species, or an optional global override.",
             "safety": "One shared context-aware rules file classifies self-KO, self-damage, escape, redirection, held-item, PP/Struggle and setup-interaction risks. Move rules use the reconstructed last four level-up moves at each encounter level. Safari suppresses battle hazards and encounter-start delays; unverified mechanics are labeled rather than presented as confirmed. Horde cards with any start-delay ability show a separate 100% slowed alternative.",
             "not_ranked": "Alpha schedules, legendary/mythical encounters, other unknown-rate phenomena/special encounters, eggs and Game Corner are not ranked.",
             "zorua_assumption": "Until a confirmed rate is exposed, Lostlorn Forest Zorua is modeled as 5% of the conditional 3× horde pool and the disclosed species share the remaining 95%.",
-            "chum": "Chum keeps the fishing species table; additional encounters are represented through editable method speed.",
+            "fishing_rods": "Old Rod, Good Rod and Super Rod remain separate ranked methods. Their Lure variants preserve the selected rod table instead of substituting the surfing table.",
+            "chum": "Chum keeps the selected rod composition; additional encounters are represented through editable method speed.",
             "fossil": "Fossil groups are guaranteed-species revivals and do not receive the event wild-only shiny boost.",
             "dump_cleanup": "Decorated region labels, a prefixed Super Rod label, and literal control characters in unrelated strings are canonicalized while importing.",
         },
-        "siteVersion": "0.8.13",
+        "siteVersion": "0.8.14",
         "generatedAt": "2026-08-06",
         "encounterSource": "PokeMMO moddable resources dump(10) uploaded 2026-08-06",
         "encounterDumpSha256": dump_hash,
@@ -646,8 +813,8 @@ def main() -> int:
 
     methods = collections.Counter(group["method"] for group in groups)
     print(f"Loaded monsters: {len(monsters)}")
-    print(f"Raw ranking rows: {len(raw_groups):,}")
-    print(f"Location/time groups: {len(collapsed):,}")
+    print(f"Raw ranking rows: {raw_variant_count:,} ({len(raw_groups):,} base + {len(special_raw_groups):,} rod/special)")
+    print(f"Location/time groups: {collapsed_variant_count:,} ({len(collapsed):,} base + {len(special_collapsed):,} rod/special)")
     print(f"Display groups: {len(groups):,}")
     for method, count in sorted(methods.items()):
         print(f"  {method}: {count:,}")

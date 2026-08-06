@@ -15,6 +15,16 @@ const WAR_EVENT_END_UTC = Date.UTC(2026, 7, 29, 0, 0, 0);
 const TIER_POINTS = Object.freeze({0:50, 1:45, 2:40, 3:30, 4:15, 5:10, 6:5, 7:3});
 const ROTATIONAL_SETTING_KEYS = Object.freeze(["johtoSafariRotationalTier", "greatMarshRotationalTier"]);
 const SLOW_BASELINE_METHOD = Object.freeze({"5x Horde":"5x Horde (Slowed)", "3x Horde":"3x Horde (Slowed)"});
+const METHOD_SPEED_KEY = Object.freeze({
+  "Old Rod":"Fishing", "Good Rod":"Fishing", "Super Rod":"Fishing",
+  "Old Rod + Lure":"Fishing + Lure", "Good Rod + Lure":"Fishing + Lure", "Super Rod + Lure":"Fishing + Lure",
+  "Old Rod + Chum Bucket":"Fishing + Chum Bucket", "Good Rod + Chum Bucket":"Fishing + Chum Bucket", "Super Rod + Chum Bucket":"Fishing + Chum Bucket",
+  "Old Rod + Lure + Chum Bucket":"Fishing + Lure + Chum Bucket",
+  "Good Rod + Lure + Chum Bucket":"Fishing + Lure + Chum Bucket",
+  "Super Rod + Lure + Chum Bucket":"Fishing + Lure + Chum Bucket",
+  "Safari Old Rod":"Safari Singles", "Safari Good Rod":"Safari Singles", "Safari Super Rod":"Safari Singles",
+  "Safari Old Rod + Lure":"Lure Safari Singles", "Safari Good Rod + Lure":"Lure Safari Singles", "Safari Super Rod + Lure":"Lure Safari Singles"
+});
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
@@ -366,6 +376,24 @@ function teamForPlayer(playerName, explicitTeamName = "") {
 function eligibleSecret(method) {
   return !String(method).includes("Horde");
 }
+function methodSpeedKey(method) {
+  return METHOD_SPEED_KEY[String(method)] || String(method);
+}
+function rodNameFromMethod(method) {
+  return String(method || "").match(/^(?:Safari )?(Old Rod|Good Rod|Super Rod)/)?.[1] || "";
+}
+function rodMethodExplanation(group) {
+  const rod = rodNameFromMethod(group?.method);
+  if (!rod) return "";
+  const parts = [group.lure
+    ? `Uses 95% of the selected ${rod} table plus the location's modeled 5% Water Lure-exclusive slot.`
+    : `Uses the selected ${rod} encounter table.`];
+  if (String(group.method).includes("Chum Bucket")) {
+    parts.push("Chum keeps this composition; its extra encounters are represented by the editable fishing-speed assumption.");
+  }
+  if (group.safari) parts.push("Safari capture odds and the Safari point bonus are applied after the encounter composition.");
+  return parts.join(" ");
+}
 function shinyDenominatorForMethod(method, settings) {
   const wildBoost = method === "Fossil" ? 0 : Number(settings.eventWildBoost || 0);
   return Number(settings.baseShinyDenominator || 30000) / (1 + wildBoost);
@@ -460,7 +488,8 @@ function slowdownExposure(group) {
   return Math.min(1, Math.max(0, exposure));
 }
 function speedProfile(group, settings) {
-  const standard = Math.max(0, Number(settings.methodSpeeds[group.method] || 0));
+  const speedKey = methodSpeedKey(group.method);
+  const standard = Math.max(0, Number(settings.methodSpeeds[speedKey] || 0));
   const baselineKey = SLOW_BASELINE_METHOD[group.method];
   const exposure = slowdownExposure(group);
   if (!baselineKey || exposure <= 0) {
@@ -1038,10 +1067,23 @@ function initializeStaticUi() {
   });
   refreshPlayerSelects();
 }
+function displayLocations(group) {
+  const visible = new Map();
+  for (const location of group?.locations || []) {
+    const key = `${location.region}\u0000${location.location}`;
+    if (!visible.has(key)) {
+      visible.set(key, { ...location, encounterTypes: [...(location.encounterTypes || [])] });
+      continue;
+    }
+    const current = visible.get(key);
+    current.encounterTypes = [...new Set([...(current.encounterTypes || []), ...(location.encounterTypes || [])])].sort();
+  }
+  return [...visible.values()];
+}
 function groupLocationPresentation(group) {
-  const locations = group.locations;
+  const locations = displayLocations(group);
   if (locations.length === 1) return { title: locations[0].location, subtitle: locations[0].region, alt: "" };
-  const sameRegion = group.regions.length === 1;
+  const sameRegion = new Set(locations.map(location => location.region)).size === 1;
   if (locations.length === 2 && sameRegion) {
     return { title: `${locations[0].location} / ${locations[1].location}`, subtitle: locations[0].region, alt: "2 equivalent locations" };
   }
@@ -1267,7 +1309,17 @@ function renderRankings() {
 
 function rawSourceFor(group, component) {
   if (group.lure) {
-    if (component.lureExclusive) return { label: "Lure slot", raw: null, explanation: "Lure-exclusive" };
+    const baseContribution = Number(component.baseShare || 0);
+    const lureContribution = Number(component.lureShare || 0);
+    if (baseContribution > 0 && lureContribution > 0) {
+      return { label: `${formatPercent(baseContribution,1)} + ${formatPercent(lureContribution,1)}`, raw: null, explanation: "base + Lure slot" };
+    }
+    if (lureContribution > 0 || component.lureExclusive) {
+      return { label: formatPercent(lureContribution || component.share, 1), raw: null, explanation: "Lure slot" };
+    }
+    if (baseContribution > 0) {
+      return { label: formatPercent(baseContribution, 1), raw: null, explanation: "95% base contribution" };
+    }
     const baseShare = component.share / 0.95;
     return { label: formatPercent(baseShare * group.rawTotal, 1), raw: baseShare * group.rawTotal, explanation: "Base table" };
   }
@@ -1280,12 +1332,15 @@ function openSpotDialog(group, mode, playerId) {
   const player = allPlayers().find(p => p.id === playerId);
   const modeLabel = {player:`${player?.name || "Player"} · live`,team:"Team live",fresh:"Fresh event",base:"Base tier value",duplicate:"All duplicate"}[mode];
   const present = groupLocationPresentation(group);
+  const rodExplanation = rodMethodExplanation(group);
   const methodExplanation = group.method.includes("Horde")
     ? `Sweet Scent uses only the ${formatPercent(group.rawTotal,0)} horde block. Each raw rate is divided by that block total.`
     : group.method === "Fossil"
       ? "Each fossil revives into one guaranteed species. The event's +10% wild-only shiny boost is not applied."
       : group.method === "Honey Tree"
         ? "The Dex Honey Tree pool is normalized for this time of day. Encounters/hour is an editable active-run assumption."
+        : rodExplanation
+          ? rodExplanation
         : group.safariPool
           ? `${group.safariPool.note} Known species keep their unconditional shares. ${score.rotationalTier >= 0 ? `The unknown slot is currently estimated as Tier ${score.rotationalTier} (${score.rotationalBasePoints} base points). Live modes cannot infer its evolution-line bonus or duplicate state from a tier alone.` : "The unknown slot is unscored until a rotational tier is selected in Settings, so the result is a lower bound."}`
         : group.lure
@@ -1314,7 +1369,7 @@ function openSpotDialog(group, mode, playerId) {
   }).join("");
   const slowdownRows = (group.slowdowns || []).map(x => `<div class="safety-row slowdown"><strong>${escapeHtml(x.pokemon)} · ${escapeHtml(x.abilities.join(" / "))}</strong><span>May add a start-of-battle animation or message.</span></div>`).join("");
   const safetySection = hazardRows || slowdownRows ? `<section class="dialog-section"><h4>Shiny safety</h4><div class="safety-list">${hazardRows}${slowdownRows}</div></section>` : "";
-  const locations = group.locations.map(location => `<div class="location-option"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)}</small></div><small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div>`).join("");
+  const locations = displayLocations(group).map(location => `<div class="location-option"><div><strong>${escapeHtml(location.location)}</strong><small>${escapeHtml(location.region)}</small></div><small>${escapeHtml(location.encounterTypes.join(" / "))}</small></div>`).join("");
   const captureExplanation = group.safari
     ? score.captureMode === "global"
       ? `Global Safari catch override: ${formatPercent(score.captureAverage)} success (${formatPercent(score.captureLoss)} loss).`
@@ -1350,7 +1405,7 @@ function resetRankingFilters() {
 }
 function downloadRankingCsv() {
   const headers = ["rank","locations","regions","week","season","time","method","encounters_per_hour_standard","encounters_per_hour_100pct_slowed","slowdown_exposure","average_points","points_per_hour_standard","points_per_hour_100pct_slowed","confidence","composition","safety_warnings","slowdown_abilities","safari_coverage","safari_catch_success","safari_loss_chance","safari_catch_model","safari_component_estimates"];
-  const rows = currentRankingRows.map((row,index) => [index+1,row.group.locations.map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.standardEncountersPerHour,row.score.hasSlowdownRange ? row.score.fullDelayEncountersPerHour : "",row.score.slowdownExposure,row.score.average,row.score.pointsPerHour,row.score.hasSlowdownRange ? row.score.fullDelayPointsPerHour : "",row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name} [${h.category || h.kind}/${h.severity}/${h.verificationStatus || "confirmed"}]`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
+  const rows = currentRankingRows.map((row,index) => [index+1,displayLocations(row.group).map(l=>`${l.region}: ${l.location}`).join(" | "),row.group.regions.join(" | "),row.group.week,row.group.season,row.group.timeLabel,row.group.method,row.score.standardEncountersPerHour,row.score.hasSlowdownRange ? row.score.fullDelayEncountersPerHour : "",row.score.slowdownExposure,row.score.average,row.score.pointsPerHour,row.score.hasSlowdownRange ? row.score.fullDelayPointsPerHour : "",row.group.confidence,row.score.detail.map(c=>`${c.pokemon} ${formatPercent(c.share)}`).join("; "),(row.group.hazards||[]).map(h=>`${h.pokemon}: ${h.name} [${h.category || h.kind}/${h.severity}/${h.verificationStatus || "confirmed"}]`).join("; "),(row.group.slowdowns||[]).map(x=>`${x.pokemon}: ${x.abilities.join("/")}`).join("; "),row.group.safariPool ? `${formatPercent(row.group.safariPool.documentedTotal)} documented; ${formatPercent(row.group.safariPool.unknownShare)} rotational; ${row.score.rotationalTier >= 0 ? `T${row.score.rotationalTier} estimate` : "unscored"}` : "",row.group.safari ? row.score.captureAverage : "",row.group.safari ? row.score.captureLoss : "",row.group.safari ? row.score.captureMode : "",row.group.safari ? row.score.detail.map(c=>`${c.pokemon}: ${formatPercent(c.catchChance)} (${c.catchSource})`).join("; ") : ""]);
   const csv = [headers,...rows].map(r => r.map(v => `"${String(v ?? "").replaceAll('"','""')}"`).join(",")).join("\n");
   downloadBlob("wartool-filtered-rankings.csv", new Blob([csv], {type:"text/csv;charset=utf-8"}));
 }
@@ -1456,9 +1511,26 @@ function renderLeaderboards() {
     const teamCatches = activeCatches(team.id).length;
     const body = rows.length ? rows.map((row,index) => {
       const rankClass = index < 3 ? ` top-${index + 1}` : "";
-      return `<div class="leaderboard-row${rankClass}"><span class="leader-rank">#${index + 1}</span><strong>${escapeHtml(row.player.name)}</strong><span class="leader-stat" title="Points without the species/unique-line bonus. Secret Shiny and Safari bonuses still count."><b>${formatNumber(row.points,0)}</b><small>${formatNumber(row.basePoints,0)} without species bonus</small></span><span class="leader-stat"><b>${row.catches}</b><small>catches</small></span><span class="leader-stat"><b>${row.lines}</b><small>lines</small></span></div>`;
+      return `<div class="leaderboard-row${rankClass}">
+        <span class="leader-rank">#${index + 1}</span>
+        <strong>${escapeHtml(row.player.name)}</strong>
+        <span class="leader-stat"><b>${formatNumber(row.points,0)}</b><small>points</small></span>
+        <span class="leader-stat no-species" title="Only the team-first species/evolution-line bonus is removed. Secret Shiny and Safari bonuses still count."><b>${formatNumber(row.basePoints,0)}</b><small>no species bonus</small></span>
+        <span class="leader-stat"><b>${row.catches}</b><small>catches</small></span>
+        <span class="leader-stat"><b>${row.lines}</b><small>lines</small></span>
+      </div>`;
     }).join("") : '<div class="empty-state">No players available.</div>';
-    return `<article class="panel leaderboard-card ${team.id === selectedTeamId() ? "selected" : ""}"><div class="panel-heading leaderboard-heading"><div><span class="panel-kicker">${escapeHtml(team.name)}</span><h2>Player leaderboard</h2></div><div class="leaderboard-team-total" title="Points without the species/unique-line bonus. Secret Shiny and Safari bonuses still count."><strong>${formatNumber(context.teamTotal,0)}</strong><small>${formatNumber(context.teamBaseTotal,0)} without species bonus · ${teamCatches} ${teamCatches === 1 ? "catch" : "catches"}</small></div></div><div class="leaderboard-columns" aria-hidden="true"><span>Rank</span><span>Player</span><span>Points</span><span>Catches</span><span>Lines</span></div><div class="leaderboard-rows">${body}</div></article>`;
+    return `<article class="panel leaderboard-card ${team.id === selectedTeamId() ? "selected" : ""}">
+      <div class="panel-heading leaderboard-heading">
+        <div><span class="panel-kicker">${escapeHtml(team.name)}</span><h2>Player leaderboard</h2><small>${teamCatches} ${teamCatches === 1 ? "catch" : "catches"}</small></div>
+        <div class="leaderboard-team-total">
+          <span><strong>${formatNumber(context.teamTotal,0)}</strong><small>points</small></span>
+          <span class="no-species" title="Only the team-first species/evolution-line bonus is removed. Secret Shiny and Safari bonuses still count."><strong>${formatNumber(context.teamBaseTotal,0)}</strong><small>no species bonus</small></span>
+        </div>
+      </div>
+      <div class="leaderboard-columns" aria-hidden="true"><span>Rank</span><span>Player</span><span>Points</span><span>No species bonus</span><span>Catches</span><span>Lines</span></div>
+      <div class="leaderboard-rows">${body}</div>
+    </article>`;
   }).join("");
 }
 
@@ -1597,6 +1669,10 @@ function renderSettings() {
   const methodSettingLabel = method => ({
     "5x Horde (Slowed)": "5× Horde · 100% start-delay baseline",
     "3x Horde (Slowed)": "3× Horde · 100% start-delay baseline",
+    "Fishing": "Fishing · Old / Good / Super Rod",
+    "Fishing + Lure": "Fishing + Lure · any rod",
+    "Fishing + Chum Bucket": "Fishing + Chum Bucket · any rod",
+    "Fishing + Lure + Chum Bucket": "Fishing + Lure + Chum Bucket · any rod",
   }[method] || method);
   $("#methodSettings").innerHTML = Object.entries(effective.methodSpeeds).map(([method,value]) => `<div class="setting-row"><label>${escapeHtml(methodSettingLabel(method))}</label><input class="settings-input" data-method="${escapeHtml(method)}" type="number" min="0" step="1" value="${value}" ${remoteOverride ? "disabled" : ""}>${SLOW_BASELINE_METHOD[method] ? "" : method.includes("(Slowed)") ? '<small>Shown as the 100% slowed alternative whenever the horde contains any start-delay ability.</small>' : ""}</div>`).join("");
   $$('[data-setting]').forEach(input => input.addEventListener("change", () => { state.settings[input.dataset.setting] = Number(input.value); saveState(); renderRankings(); renderSettings(); }));

@@ -32,6 +32,24 @@ EXPECTED_METHOD_SPEEDS = {
     "Honey Tree": 60,
     "Fossil": 120,
 }
+ROD_TYPES = ("Old Rod", "Good Rod", "Super Rod")
+
+
+def method_speed_key(method: str) -> str:
+    base = method.removeprefix("Safari ")
+    rod = next((name for name in ROD_TYPES if base.startswith(name)), None)
+    if not rod:
+        return method
+    if method.startswith("Safari "):
+        return "Lure Safari Singles" if "+ Lure" in method else "Safari Singles"
+    if "+ Lure + Chum Bucket" in method:
+        return "Fishing + Lure + Chum Bucket"
+    if "+ Chum Bucket" in method:
+        return "Fishing + Chum Bucket"
+    if "+ Lure" in method:
+        return "Fishing + Lure"
+    return "Fishing"
+
 TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
 
 EXPECTED_METHOD_COUNTS = {
@@ -39,17 +57,32 @@ EXPECTED_METHOD_COUNTS = {
     "3x Horde": 610,
     "Lure Singles": 4356,
     "Singles": 4162,
-    "Safari Singles": 400,
+    "Safari Singles": 287,
     "Lure Safari Singles": 179,
-    "Fishing": 860,
-    "Fishing + Lure": 1128,
-    "Fishing + Chum Bucket": 860,
-    "Fishing + Lure + Chum Bucket": 1128,
+    "Old Rod": 53,
+    "Good Rod": 298,
+    "Super Rod": 516,
+    "Old Rod + Lure": 414,
+    "Good Rod + Lure": 602,
+    "Super Rod + Lure": 825,
+    "Old Rod + Chum Bucket": 53,
+    "Good Rod + Chum Bucket": 298,
+    "Super Rod + Chum Bucket": 516,
+    "Old Rod + Lure + Chum Bucket": 414,
+    "Good Rod + Lure + Chum Bucket": 602,
+    "Super Rod + Lure + Chum Bucket": 825,
+    "Safari Old Rod": 28,
+    "Safari Good Rod": 48,
+    "Safari Super Rod": 41,
+    "Safari Old Rod + Lure": 28,
+    "Safari Good Rod + Lure": 48,
+    "Safari Super Rod + Lure": 41,
     "Rock Smash": 256,
     "Headbutt": 245,
     "Honey Tree": 12,
     "Fossil": 36,
 }
+
 
 
 class IdParser(HTMLParser):
@@ -87,10 +120,11 @@ def fail(errors: list[str], message: str) -> None:
     errors.append(message)
 
 
-def score_demo_catches(catches: list[dict[str, Any]], pokemon_by_id: dict[int, dict[str, Any]]) -> tuple[int, int]:
+def score_demo_catches(catches: list[dict[str, Any]], pokemon_by_id: dict[int, dict[str, Any]]) -> tuple[int, int, int]:
     team_lines: set[str] = set()
     player_lines: dict[str, set[str]] = defaultdict(set)
     total = 0
+    without_species_bonus = 0
     scored = 0
     for item in sorted(catches, key=lambda row: (row.get("caughtAt", ""), row.get("id", ""))):
         pokemon = pokemon_by_id[int(item["pokemonId"])]
@@ -105,12 +139,31 @@ def score_demo_catches(catches: list[dict[str, Any]], pokemon_by_id: dict[int, d
         else:
             base = int(pokemon["points"])
         unique = 0 if line in team_lines else 8
-        value = base + unique + (20 if item.get("secret") else 0) + (10 if item.get("safari") else 0)
+        secret = 20 if item.get("secret") else 0
+        safari = 10 if item.get("safari") else 0
+        value = base + unique + secret + safari
         total += value
+        without_species_bonus += base + secret + safari
         scored += 1
         team_lines.add(line)
         player_lines[item["playerId"]].add(line)
-    return total, scored
+    return total, without_species_bonus, scored
+
+
+def validate_no_species_bonus_scoring(errors: list[str]) -> None:
+    synthetic_pokemon = {
+        1: {"id": 1, "points": 50, "line": "Line A"},
+        2: {"id": 2, "points": 30, "line": "Line B"},
+    }
+    catches = [
+        {"id": "a", "caughtAt": "2026-08-01T00:00:00Z", "playerId": "one", "pokemonId": 1, "line": "Line A", "secret": True, "safari": True},
+        {"id": "b", "caughtAt": "2026-08-01T00:01:00Z", "playerId": "two", "pokemonId": 1, "line": "Line A"},
+        {"id": "c", "caughtAt": "2026-08-01T00:02:00Z", "playerId": "one", "pokemonId": 1, "line": "Line A", "alpha": True},
+        {"id": "d", "caughtAt": "2026-08-01T00:03:00Z", "playerId": "two", "pokemonId": 2, "line": "Line B", "egg": True, "secret": True},
+    ]
+    total, without_species, count = score_demo_catches(catches, synthetic_pokemon)
+    if (total, without_species, count) != (236, 220, 4):
+        fail(errors, f"No-species-bonus scoring regression: got total={total}, withoutSpecies={without_species}, catches={count}; expected 236/220/4.")
 
 
 def main() -> int:
@@ -193,6 +246,10 @@ def main() -> int:
         pattern = rf'"{re.escape(method)}"\s*:\s*{speed}(?:\D|$)'
         if not re.search(pattern, app_text):
             fail(errors, f"Default speed missing or wrong: {method} = {speed}")
+    for marker in ("No species bonus", "Only the team-first species/evolution-line bonus is removed", "Secret Shiny and Safari bonuses still count"):
+        if marker not in app_text:
+            fail(errors, f"Leaderboard no-species clarification is missing: {marker}")
+    validate_no_species_bonus_scoring(errors)
 
     # Core data dimensions.
     if len(pokemon) != 601:
@@ -200,21 +257,32 @@ def main() -> int:
     line_count = len({item["line"] for item in pokemon}) if pokemon else 0
     if line_count != 282:
         fail(errors, f"Expected 282 evolution lines, found {line_count}")
-    if len(groups) != 16119:
-        fail(errors, f"Expected 16,119 display groups, found {len(groups)}")
+    if len(groups) != 17680:
+        fail(errors, f"Expected 17,680 display groups, found {len(groups)}")
     if int(validation.get("summary", {}).get("fatalChecks", -1)) != 0:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
         fail(errors, "Validation summary display-group count disagrees with data.")
+    raw_variants = int(validation.get("summary", {}).get("rawVariants", -1))
+    if raw_variants != 59814 or int(validation.get("summary", {}).get("locationTimeCollapsed", -1)) != 27594:
+        fail(errors, f"Raw/collapsed variant counts changed unexpectedly: {raw_variants}/{validation.get('summary', {}).get('locationTimeCollapsed')}.")
+    complete_variants = int(meta.get("complete_variants", -1))
+    incomplete_variants = int(meta.get("incomplete_variants", -1))
+    if int(meta.get("ranking_variants", -1)) != raw_variants:
+        fail(errors, "Metadata ranking_variants disagrees with the generated validation summary.")
+    if complete_variants + incomplete_variants != raw_variants:
+        fail(errors, f"Metadata complete/incomplete variants do not add up: {complete_variants} + {incomplete_variants} != {raw_variants}.")
+    if (complete_variants, incomplete_variants) != (59790, 24):
+        fail(errors, f"Expected 59,790 complete and 24 incomplete raw variants, found {complete_variants}/{incomplete_variants}.")
     slowed_rows = [group for group in groups if "(Slowed)" in str(group.get("method", ""))]
     if slowed_rows:
         fail(errors, f"Found {len(slowed_rows)} duplicate slowed hunt rows; slowdown alternatives must stay inside the base hunt card.")
-    if meta.get("siteVersion") != "0.8.13":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.13'.")
-    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.13":
-        fail(errors, "VERSION.txt is not 0.8.13.")
-    if "WARtool v0.8.13" not in index_text or 'APP_VERSION = "0.8.13"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
-        fail(errors, "Public page and local server are not consistently versioned as 0.8.13.")
+    if meta.get("siteVersion") != "0.8.14":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.14'.")
+    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.14":
+        fail(errors, "VERSION.txt is not 0.8.14.")
+    if "WARtool v0.8.14" not in index_text or 'APP_VERSION = "0.8.14"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
+        fail(errors, "Public page and local server are not consistently versioned as 0.8.14.")
     required_ui_tokens = (
         'data-tab="players"',
         'id="tab-players"',
@@ -225,10 +293,10 @@ def main() -> int:
     )
     for token in required_ui_tokens:
         if token not in index_text:
-            fail(errors, f"v0.8.13 UI token is missing: {token}")
-    for token in ("function pokeMMOClock", "function assumedWarWeek", "function renderLeaderboards", "WAR_EVENT_START_UTC", "playerBaseTotals", "no bonus"):
+            fail(errors, f"v0.8.14 UI token is missing: {token}")
+    for token in ("function pokeMMOClock", "function assumedWarWeek", "function renderLeaderboards", "function displayLocations", "WAR_EVENT_START_UTC", "playerBaseTotals", "no species bonus", "METHOD_SPEED_KEY", "rodMethodExplanation"):
         if token not in app_text:
-            fail(errors, f"v0.8.13 application logic is missing: {token}")
+            fail(errors, f"v0.8.14 application logic is missing: {token}")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -249,8 +317,9 @@ def main() -> int:
     for index, group in enumerate(groups, start=1):
         method = group.get("method")
         methods[method] += 1
-        if method not in EXPECTED_METHOD_SPEEDS:
-            fail(errors, f"Group {index} uses method without speed setting: {method}")
+        speed_key = method_speed_key(str(method))
+        if speed_key not in EXPECTED_METHOD_SPEEDS:
+            fail(errors, f"Group {index} uses method without speed setting: {method} -> {speed_key}")
         components = group.get("components") or []
         locations = group.get("locations") or []
         if not components or not locations:
@@ -288,6 +357,43 @@ def main() -> int:
         fail(errors, f"Expected methods absent from groups: {', '.join(missing_methods)}")
     if methods != Counter(EXPECTED_METHOD_COUNTS):
         fail(errors, f"Encounter method counts changed unexpectedly: {dict(methods)}")
+
+    # Rod tables must remain visibly distinct and keep the selected rod's pool.
+    generic_fishing = [group for group in groups if str(group.get("method", "")).startswith("Fishing")]
+    if generic_fishing:
+        fail(errors, f"Found {len(generic_fishing)} generic Fishing groups; Old/Good/Super Rod must remain separate.")
+    rod_groups = [group for group in groups if any(name in str(group.get("method", "")) for name in ROD_TYPES)]
+    if len(rod_groups) != 5650:
+        fail(errors, f"Expected 5,650 rod-specific groups, found {len(rod_groups)}.")
+    rod_lure_groups = [group for group in rod_groups if "+ Lure" in str(group.get("method", ""))]
+    if len(rod_lure_groups) != 3799:
+        fail(errors, f"Expected 3,799 rod + Lure groups, found {len(rod_lure_groups)}.")
+    safari_rod_groups = [group for group in rod_groups if str(group.get("method", "")).startswith("Safari ")]
+    if len(safari_rod_groups) != 234:
+        fail(errors, f"Expected 234 Safari rod groups, found {len(safari_rod_groups)}.")
+    if any("Chum Bucket" in str(group.get("method", "")) for group in safari_rod_groups):
+        fail(errors, "Safari rod groups must not generate Chum Bucket variants.")
+    for group in rod_groups:
+        method = str(group.get("method", ""))
+        rod = next((name for name in ROD_TYPES if name in method), None)
+        if not rod:
+            fail(errors, f"Rod group {group.get('id')} has no identifiable rod: {method}")
+            continue
+        encounter_types = {encounter_type for location in group.get("locations", []) for encounter_type in location.get("encounterTypes", [])}
+        if rod not in encounter_types:
+            fail(errors, f"Rod group {group.get('id')} says {rod} but its locations expose {sorted(encounter_types)}.")
+        if "+ Lure" not in method:
+            continue
+        base_share = sum(float(component.get("baseShare", 0) or 0) for component in group.get("components", []))
+        lure_share = sum(float(component.get("lureShare", 0) or 0) for component in group.get("components", []))
+        if not math.isclose(base_share, 0.95, rel_tol=0, abs_tol=1e-9):
+            fail(errors, f"Rod + Lure group {group.get('id')} base contribution is {base_share:.12f}, expected 0.95.")
+        if not math.isclose(lure_share, 0.05, rel_tol=0, abs_tol=1e-9):
+            fail(errors, f"Rod + Lure group {group.get('id')} Lure contribution is {lure_share:.12f}, expected 0.05.")
+        for component in group.get("components", []):
+            combined_share = float(component.get("baseShare", 0) or 0) + float(component.get("lureShare", 0) or 0)
+            if not math.isclose(combined_share, float(component.get("share", 0) or 0), rel_tol=0, abs_tol=1e-9):
+                fail(errors, f"Rod + Lure group {group.get('id')} component {component.get('pokemon')} loses base/Lure provenance.")
 
     valid_regions = {"Kanto", "Johto", "Hoenn", "Sinnoh", "Unova"}
     valid_types = {"Grass", "Cave", "Inside", "Water", "Dark Grass", "Old Rod", "Good Rod", "Super Rod", "Rocks", "Headbutt", "Sweet Scent", "Honey Tree", "Fossil revival"}
@@ -407,10 +513,10 @@ def main() -> int:
         fail(errors, "Generated hazards contain an invalid severity.")
     if any(hazard.get("verificationStatus") not in verification_statuses for hazard in all_hazards):
         fail(errors, "Generated hazards contain an invalid verification status.")
-    if len(hazard_groups) != 7991:
-        fail(errors, f"Expected 7,991 safety-warning groups, found {len(hazard_groups)}.")
-    if len(critical_hazard_groups) != 3269:
-        fail(errors, f"Expected 3,269 critical-warning groups, found {len(critical_hazard_groups)}.")
+    if len(hazard_groups) != 8477:
+        fail(errors, f"Expected 8,477 safety-warning groups, found {len(hazard_groups)}.")
+    if len(critical_hazard_groups) != 3235:
+        fail(errors, f"Expected 3,235 critical-warning groups, found {len(critical_hazard_groups)}.")
     if len(rage_powder_groups) != 96:
         fail(errors, f"Expected 96 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
     rage_methods = Counter(group.get("method") for group in rage_powder_groups)
@@ -427,10 +533,10 @@ def main() -> int:
         fail(errors, f"Redirection warnings leaked into {len(invalid_single_redirection)} true single-only groups.")
     if len(follow_me_groups) != 60 or any(group.get("method") != "Lure Singles" for group in follow_me_groups):
         fail(errors, f"Expected 60 Follow Me Lure-double warning groups, found {len(follow_me_groups)}.")
-    if len(warning_hazard_groups) != 6807:
-        fail(errors, f"Expected 6,807 warning-severity groups, found {len(warning_hazard_groups)}.")
-    if len(preparation_hazard_groups) != 937:
-        fail(errors, f"Expected 937 preparation groups, found {len(preparation_hazard_groups)}.")
+    if len(warning_hazard_groups) != 7359:
+        fail(errors, f"Expected 7,359 warning-severity groups, found {len(warning_hazard_groups)}.")
+    if len(preparation_hazard_groups) != 903:
+        fail(errors, f"Expected 903 preparation groups, found {len(preparation_hazard_groups)}.")
 
     # 2026-08-02 safety-audit corrections.
     non_ghost_curse_species = {"Camerupt", "Ferrothorn", "Hippopotas", "Numel", "Onix", "Shelmet", "Steelix", "Turtwig"}
@@ -463,7 +569,7 @@ def main() -> int:
         "Transform / Imposter preparation": 280,
         "Trick": 122,
         "Switcheroo": 16,
-        "Hoppip / Skiploom compound setup": 109,
+        "Hoppip / Skiploom compound setup": 75,
     }
     for warning_name, expected_count in expected_new_safety_groups.items():
         actual = sum(any(hazard.get("name") == warning_name for hazard in group.get("hazards", [])) for group in groups)
@@ -486,8 +592,8 @@ def main() -> int:
         fail(errors, "Perish Song warnings leaked back into explicit horde methods.")
     if safari_hazard_groups:
         fail(errors, f"Safari methods must not contain battle hazards; found {len(safari_hazard_groups)} groups.")
-    if len(slowdown_groups) != 6776:
-        fail(errors, f"Expected 6,776 start-delay groups, found {len(slowdown_groups)}.")
+    if len(slowdown_groups) != 7208:
+        fail(errors, f"Expected 7,208 start-delay groups, found {len(slowdown_groups)}.")
     if any(group.get("safari") and group.get("slowdowns") for group in groups):
         fail(errors, "Safari methods must not contain encounter-start ability slowdown indicators.")
     slowed_hordes = [group for group in groups if group.get("method") in {"3x Horde", "5x Horde"} and group.get("slowdowns")]
@@ -507,8 +613,8 @@ def main() -> int:
         for group in groups
     ):
         fail(errors, "Hidden-ability Unnerve is incorrectly treated as a normal wild start delay for Houndour/Houndoom.")
-    if len(natural_horde_groups) != 10300:
-        fail(errors, f"Expected 10,300 ordinary tables containing natural hordes, found {len(natural_horde_groups)}.")
+    if len(natural_horde_groups) != 8044:
+        fail(errors, f"Expected 8,044 ordinary tables containing natural hordes, found {len(natural_horde_groups)}.")
     if not any(group.get("method") == "Singles" and group.get("containsNaturalHordes") for group in groups):
         fail(errors, "Ordinary Singles no longer include natural horde rolls.")
 
@@ -533,16 +639,16 @@ def main() -> int:
             fail(errors, f"Safari group {group.get('id')} uses rotational setting {pool.get('settingKey')!r}, expected {expected_key!r}.")
 
     safari_groups = [group for group in groups if group.get("safari")]
-    if len(safari_groups) != 579:
-        fail(errors, f"Expected 579 Safari ranking groups after region-specific catch splitting, found {len(safari_groups)}.")
+    if len(safari_groups) != 700:
+        fail(errors, f"Expected 700 Safari ranking groups after rod separation and region-specific catch splitting, found {len(safari_groups)}.")
     if any(len({location.get("region") for location in group.get("locations", [])}) > 1 for group in safari_groups):
         fail(errors, "Safari groups from different regions were merged despite region-specific capture models.")
     matched_capture_groups = [
         group for group in safari_groups
         if any(component.get("safariCapture") for component in group.get("components", []))
     ]
-    if len(matched_capture_groups) != 327:
-        fail(errors, f"Expected 327 Safari groups with at least one matched species catch estimate, found {len(matched_capture_groups)}.")
+    if len(matched_capture_groups) != 408:
+        fail(errors, f"Expected 408 Safari groups with at least one matched species catch estimate, found {len(matched_capture_groups)}.")
     if any(component.get("safariCapture") for group in groups if not group.get("safari") for component in group.get("components", [])):
         fail(errors, "Safari capture estimates leaked into non-Safari groups.")
     pidgey_estimates = [
@@ -639,7 +745,7 @@ def main() -> int:
         if pair not in roster_by_pair:
             fail(errors, f"Live catch {index} player/team is not in the packaged roster: {pair}")
 
-    packaged_total, packaged_count = score_demo_catches(live_catches, pokemon_by_id) if pokemon_by_id else (0, 0)
+    packaged_total, packaged_without_species, packaged_count = score_demo_catches(live_catches, pokemon_by_id) if pokemon_by_id else (0, 0, 0)
     if live.get("mode") == "preview" and packaged_count != 0:
         fail(errors, f"Release preview must not bundle caught shinies, found {packaged_count}.")
     preview_text = (ROOT / "data/preview.js").read_text(encoding="utf-8")
@@ -660,7 +766,7 @@ def main() -> int:
         f"Incomplete groups hidden by default: {incomplete}",
         f"Sprites: {len(pokemon) * 2:,} normal/shiny files verified",
         f"Roster: {sum(team_counts.values())} players across {len(team_counts)} separate teams",
-        f"Packaged team data: {packaged_count} catches scoring {packaged_total} points",
+        f"Packaged team data: {packaged_count} catches scoring {packaged_total} points ({packaged_without_species} without species bonus)",
         "GitHub Pages paths, scheduled Google Sheet importer, and same-origin JSON contract verified",
     ])
 
@@ -674,8 +780,9 @@ def main() -> int:
     for note in notes:
         print(f"- {note}")
     print("\nMethod groups:")
-    for method in EXPECTED_METHOD_SPEEDS:
-        print(f"- {method}: {methods[method]:,} groups @ {EXPECTED_METHOD_SPEEDS[method]:,} encounters/hour")
+    for method, expected_count in EXPECTED_METHOD_COUNTS.items():
+        speed_key = method_speed_key(method)
+        print(f"- {method}: {methods[method]:,} groups @ {EXPECTED_METHOD_SPEEDS[speed_key]:,} encounters/hour ({speed_key} setting)")
     return 0
 
 

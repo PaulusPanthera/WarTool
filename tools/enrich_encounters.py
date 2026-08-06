@@ -383,26 +383,45 @@ def transform_random_tables(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         lure_old = lure_rows.get(key)
         if lure_old:
-            lure_ids = [c for c in lure_old["components"] if c.get("lureExclusive")]
+            lure_ids = [c for c in lure_old["components"] if float(c.get("lureShare", 0) or 0) > 0 or c.get("lureExclusive")]
             scaled: dict[int, dict[str, Any]] = {}
             for component in components:
                 item = copy.deepcopy(component)
-                item["shownWeight"] = float(component.get("shownWeight", component["share"])) * 0.95
+                base_share = float(component.get("shownWeight", component["share"])) * 0.95
+                item["shownWeight"] = base_share
                 item["share"] = 0
+                item["baseShare"] = base_share
+                item["lureShare"] = 0.0
                 item["sources"] = [dict(src, eventRate=float(src["eventRate"]) * 0.95) for src in component.get("sources", [])]
                 scaled[int(item["pokemonId"])] = item
             if lure_ids:
-                each = 0.05 / len(lure_ids)
+                recorded_total = sum(float(component.get("lureShare", 0) or 0) for component in lure_ids)
                 for component in lure_ids:
-                    item = copy.deepcopy(component)
-                    item["rawRate"] = each
-                    item["shownWeight"] = each
-                    item["sources"] = [{"eventRate": each, "count": 1, "label": "Lure-exclusive encounter"}]
-                    scaled[int(item["pokemonId"])] = item
+                    recorded = float(component.get("lureShare", 0) or 0)
+                    lure_weight = (recorded / recorded_total * 0.05) if recorded_total > 0 else (0.05 / len(lure_ids))
+                    pid = int(component["pokemonId"])
+                    if pid in scaled:
+                        item = scaled[pid]
+                        item["shownWeight"] = float(item.get("shownWeight", 0)) + lure_weight
+                        item["lureShare"] = float(item.get("lureShare", 0)) + lure_weight
+                        item["lureExclusive"] = False
+                        item.setdefault("sources", []).append({"eventRate": lure_weight, "count": 1, "label": "Lure-exclusive encounter"})
+                        item["minLevel"] = min(int(item.get("minLevel", 0)), int(component.get("minLevel", 0)))
+                        item["maxLevel"] = max(int(item.get("maxLevel", 0)), int(component.get("maxLevel", 0)))
+                    else:
+                        item = copy.deepcopy(component)
+                        item["rawRate"] = lure_weight
+                        item["shownWeight"] = lure_weight
+                        item["baseShare"] = 0.0
+                        item["lureShare"] = lure_weight
+                        item["sources"] = [{"eventRate": lure_weight, "count": 1, "label": "Lure-exclusive encounter"}]
+                        scaled[pid] = item
             total = sum(float(c["shownWeight"]) for c in scaled.values())
             lure_components = list(scaled.values())
             for c in lure_components:
                 c["share"] = float(c["shownWeight"]) / total if total else 0
+                c["baseShare"] = float(c.get("baseShare", 0)) / total if total else 0
+                c["lureShare"] = float(c.get("lureShare", 0)) / total if total else 0
             lure_components.sort(key=lambda c: (-float(c["share"]), c["pokemon"]))
             lure = copy.deepcopy(row)
             lure["method"] = "Lure Safari Singles" if safari else "Lure Singles"
