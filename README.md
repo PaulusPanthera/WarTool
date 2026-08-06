@@ -1,4 +1,4 @@
-# WARtool v0.8.12
+# WARtool v0.8.13
 
 Static PokeMMO Shiny Wars hunt planner, caught-shiny tier overview and team
 progress website for two separate MÜSH competition teams.
@@ -52,8 +52,9 @@ WAR_SETTINGS_CSV_URL
 
 The Players tab displays one leaderboard for each competition team. Every active
 roster member is included and ranked by scored points, then catch count, unique
-evolution lines and name. Team totals use the same duplicate, Alpha, Secret,
-Safari and first-line scoring logic as the Catches and Progress tabs.
+evolution lines and name. Each player and team total also shows **no-bonus
+points**, which exclude the first evolution-line, Secret Shiny and Safari
+bonuses while retaining the normal Alpha, Egg and duplicate base-point rules.
 
 ## Automatic week and game time
 
@@ -65,6 +66,12 @@ Week and Time use automatic filters by default:
 - the context label refreshes every 15 seconds and the rankings refresh when the
   active period changes;
 - manual Week or Time selections remain available.
+
+## Encounter source
+
+The ranking data was rebuilt from `dump(10).zip`, exported on 2026-08-06. The
+rebuild keeps the new location and Lure tables while removing encounter rows
+that disappeared from the client dump.
 
 ## Safari rotational estimates
 

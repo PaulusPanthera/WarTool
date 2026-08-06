@@ -377,7 +377,9 @@ function getCatchContext(teamId = selectedTeamId()) {
   const playerLines = new Map();
   const scores = new Map();
   const playerTotals = new Map();
+  const playerBaseTotals = new Map();
   let teamTotal = 0;
+  let teamBaseTotal = 0;
   for (const catchItem of sorted) {
     const p = pokemonById.get(Number(catchItem.pokemonId));
     if (!p) continue;
@@ -399,9 +401,12 @@ function getCatchContext(teamId = selectedTeamId()) {
     seenPlayer.add(line);
     playerLines.set(catchItem.playerId, seenPlayer);
     teamTotal += total;
+    const withoutSpeciesBonus = base + secret + safari;
+    teamBaseTotal += withoutSpeciesBonus;
     playerTotals.set(catchItem.playerId, (playerTotals.get(catchItem.playerId) || 0) + total);
+    playerBaseTotals.set(catchItem.playerId, (playerBaseTotals.get(catchItem.playerId) || 0) + withoutSpeciesBonus);
   }
-  return { teamLines, playerLines, scores, playerTotals, teamTotal };
+  return { teamLines, playerLines, scores, playerTotals, playerBaseTotals, teamTotal, teamBaseTotal };
 }
 function safariRotationalTier(group, settings) {
   const key = group.safariPool?.settingKey;
@@ -1436,6 +1441,7 @@ function leaderboardRows(team) {
   return allPlayers(team.id).map(player => ({
     player,
     points: Number(context.playerTotals.get(player.id) || 0),
+    basePoints: Number(context.playerBaseTotals.get(player.id) || 0),
     catches: Number(catchCounts.get(player.id) || 0),
     lines: Number(lineSets.get(player.id)?.size || 0),
   })).sort((a,b) => b.points - a.points || b.catches - a.catches || b.lines - a.lines || a.player.name.localeCompare(b.player.name));
@@ -1450,9 +1456,9 @@ function renderLeaderboards() {
     const teamCatches = activeCatches(team.id).length;
     const body = rows.length ? rows.map((row,index) => {
       const rankClass = index < 3 ? ` top-${index + 1}` : "";
-      return `<div class="leaderboard-row${rankClass}"><span class="leader-rank">#${index + 1}</span><strong>${escapeHtml(row.player.name)}</strong><span class="leader-stat"><b>${formatNumber(row.points,0)}</b><small>points</small></span><span class="leader-stat"><b>${row.catches}</b><small>catches</small></span><span class="leader-stat"><b>${row.lines}</b><small>lines</small></span></div>`;
+      return `<div class="leaderboard-row${rankClass}"><span class="leader-rank">#${index + 1}</span><strong>${escapeHtml(row.player.name)}</strong><span class="leader-stat" title="Points without the species/unique-line bonus. Secret Shiny and Safari bonuses still count."><b>${formatNumber(row.points,0)}</b><small>${formatNumber(row.basePoints,0)} without species bonus</small></span><span class="leader-stat"><b>${row.catches}</b><small>catches</small></span><span class="leader-stat"><b>${row.lines}</b><small>lines</small></span></div>`;
     }).join("") : '<div class="empty-state">No players available.</div>';
-    return `<article class="panel leaderboard-card ${team.id === selectedTeamId() ? "selected" : ""}"><div class="panel-heading leaderboard-heading"><div><span class="panel-kicker">${escapeHtml(team.name)}</span><h2>Player leaderboard</h2></div><div class="leaderboard-team-total"><strong>${formatNumber(context.teamTotal,0)}</strong><small>${teamCatches} catches</small></div></div><div class="leaderboard-columns" aria-hidden="true"><span>Rank</span><span>Player</span><span>Points</span><span>Catches</span><span>Lines</span></div><div class="leaderboard-rows">${body}</div></article>`;
+    return `<article class="panel leaderboard-card ${team.id === selectedTeamId() ? "selected" : ""}"><div class="panel-heading leaderboard-heading"><div><span class="panel-kicker">${escapeHtml(team.name)}</span><h2>Player leaderboard</h2></div><div class="leaderboard-team-total" title="Points without the species/unique-line bonus. Secret Shiny and Safari bonuses still count."><strong>${formatNumber(context.teamTotal,0)}</strong><small>${formatNumber(context.teamBaseTotal,0)} without species bonus · ${teamCatches} ${teamCatches === 1 ? "catch" : "catches"}</small></div></div><div class="leaderboard-columns" aria-hidden="true"><span>Rank</span><span>Player</span><span>Points</span><span>Catches</span><span>Lines</span></div><div class="leaderboard-rows">${body}</div></article>`;
   }).join("");
 }
 

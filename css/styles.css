@@ -729,7 +729,7 @@ html[data-theme="dark"] .verification-status.community-documented { background:#
 html[data-theme="dark"] .poke-chip.unknown { background:#342f27; color:#f3eadb; }
 
 
-/* v0.8.12 automatic context and player leaderboards */
+/* v0.8.13 automatic context and player leaderboards */
 .auto-context-status {
   margin-top: 12px;
   padding-top: 10px;

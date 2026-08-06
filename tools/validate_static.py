@@ -36,17 +36,17 @@ TIER_POINTS = {0: 50, 1: 45, 2: 40, 3: 30, 4: 15, 5: 10, 6: 5, 7: 3}
 
 EXPECTED_METHOD_COUNTS = {
     "5x Horde": 1887,
-    "3x Horde": 621,
-    "Lure Singles": 3435,
-    "Singles": 4174,
+    "3x Horde": 610,
+    "Lure Singles": 4356,
+    "Singles": 4162,
     "Safari Singles": 400,
-    "Lure Safari Singles": 75,
+    "Lure Safari Singles": 179,
     "Fishing": 860,
-    "Fishing + Lure": 1056,
+    "Fishing + Lure": 1128,
     "Fishing + Chum Bucket": 860,
-    "Fishing + Lure + Chum Bucket": 1056,
+    "Fishing + Lure + Chum Bucket": 1128,
     "Rock Smash": 256,
-    "Headbutt": 257,
+    "Headbutt": 245,
     "Honey Tree": 12,
     "Fossil": 36,
 }
@@ -200,8 +200,8 @@ def main() -> int:
     line_count = len({item["line"] for item in pokemon}) if pokemon else 0
     if line_count != 282:
         fail(errors, f"Expected 282 evolution lines, found {line_count}")
-    if len(groups) != 14985:
-        fail(errors, f"Expected 14,985 display groups, found {len(groups)}")
+    if len(groups) != 16119:
+        fail(errors, f"Expected 16,119 display groups, found {len(groups)}")
     if int(validation.get("summary", {}).get("fatalChecks", -1)) != 0:
         fail(errors, "Encounter build reports fatal validation checks.")
     if int(validation.get("summary", {}).get("displayGroups", -1)) != len(groups):
@@ -209,12 +209,12 @@ def main() -> int:
     slowed_rows = [group for group in groups if "(Slowed)" in str(group.get("method", ""))]
     if slowed_rows:
         fail(errors, f"Found {len(slowed_rows)} duplicate slowed hunt rows; slowdown alternatives must stay inside the base hunt card.")
-    if meta.get("siteVersion") != "0.8.12":
-        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.12'.")
-    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.12":
-        fail(errors, "VERSION.txt is not 0.8.12.")
-    if "WARtool v0.8.12" not in index_text or 'APP_VERSION = "0.8.12"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
-        fail(errors, "Public page and local server are not consistently versioned as 0.8.12.")
+    if meta.get("siteVersion") != "0.8.13":
+        fail(errors, f"Metadata siteVersion is {meta.get('siteVersion')!r}, expected '0.8.13'.")
+    if (ROOT / "VERSION.txt").read_text(encoding="utf-8").strip() != "0.8.13":
+        fail(errors, "VERSION.txt is not 0.8.13.")
+    if "WARtool v0.8.13" not in index_text or 'APP_VERSION = "0.8.13"' not in (ROOT / "server.py").read_text(encoding="utf-8"):
+        fail(errors, "Public page and local server are not consistently versioned as 0.8.13.")
     required_ui_tokens = (
         'data-tab="players"',
         'id="tab-players"',
@@ -225,10 +225,10 @@ def main() -> int:
     )
     for token in required_ui_tokens:
         if token not in index_text:
-            fail(errors, f"v0.8.12 UI token is missing: {token}")
-    for token in ("function pokeMMOClock", "function assumedWarWeek", "function renderLeaderboards", "WAR_EVENT_START_UTC"):
+            fail(errors, f"v0.8.13 UI token is missing: {token}")
+    for token in ("function pokeMMOClock", "function assumedWarWeek", "function renderLeaderboards", "WAR_EVENT_START_UTC", "playerBaseTotals", "no bonus"):
         if token not in app_text:
-            fail(errors, f"v0.8.12 application logic is missing: {token}")
+            fail(errors, f"v0.8.13 application logic is missing: {token}")
     if not re.fullmatch(r"[0-9a-f]{64}", str(meta.get("encounterDumpSha256", ""))):
         fail(errors, "Encounter dump SHA-256 is missing or malformed in metadata.")
 
@@ -407,14 +407,14 @@ def main() -> int:
         fail(errors, "Generated hazards contain an invalid severity.")
     if any(hazard.get("verificationStatus") not in verification_statuses for hazard in all_hazards):
         fail(errors, "Generated hazards contain an invalid verification status.")
-    if len(hazard_groups) != 7242:
-        fail(errors, f"Expected 7,242 safety-warning groups, found {len(hazard_groups)}.")
-    if len(critical_hazard_groups) != 2997:
-        fail(errors, f"Expected 2,997 critical-warning groups, found {len(critical_hazard_groups)}.")
-    if len(rage_powder_groups) != 88:
-        fail(errors, f"Expected 88 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
+    if len(hazard_groups) != 7991:
+        fail(errors, f"Expected 7,991 safety-warning groups, found {len(hazard_groups)}.")
+    if len(critical_hazard_groups) != 3269:
+        fail(errors, f"Expected 3,269 critical-warning groups, found {len(critical_hazard_groups)}.")
+    if len(rage_powder_groups) != 96:
+        fail(errors, f"Expected 96 Rage Powder multi-battle warning groups, found {len(rage_powder_groups)}.")
     rage_methods = Counter(group.get("method") for group in rage_powder_groups)
-    expected_rage_methods = Counter({"Lure Singles": 50, "Singles": 27, "5x Horde": 11})
+    expected_rage_methods = Counter({"Lure Singles": 58, "Singles": 27, "5x Horde": 11})
     if rage_methods != expected_rage_methods:
         fail(errors, f"Rage Powder method coverage changed unexpectedly: {dict(rage_methods)}")
     invalid_single_redirection = [
@@ -425,12 +425,12 @@ def main() -> int:
     ]
     if invalid_single_redirection:
         fail(errors, f"Redirection warnings leaked into {len(invalid_single_redirection)} true single-only groups.")
-    if len(follow_me_groups) != 36 or any(group.get("method") != "Lure Singles" for group in follow_me_groups):
-        fail(errors, f"Expected 36 Follow Me Lure-double warning groups, found {len(follow_me_groups)}.")
-    if len(warning_hazard_groups) != 6088:
-        fail(errors, f"Expected 6,088 warning-severity groups, found {len(warning_hazard_groups)}.")
-    if len(preparation_hazard_groups) != 929:
-        fail(errors, f"Expected 929 preparation groups, found {len(preparation_hazard_groups)}.")
+    if len(follow_me_groups) != 60 or any(group.get("method") != "Lure Singles" for group in follow_me_groups):
+        fail(errors, f"Expected 60 Follow Me Lure-double warning groups, found {len(follow_me_groups)}.")
+    if len(warning_hazard_groups) != 6807:
+        fail(errors, f"Expected 6,807 warning-severity groups, found {len(warning_hazard_groups)}.")
+    if len(preparation_hazard_groups) != 937:
+        fail(errors, f"Expected 937 preparation groups, found {len(preparation_hazard_groups)}.")
 
     # 2026-08-02 safety-audit corrections.
     non_ghost_curse_species = {"Camerupt", "Ferrothorn", "Hippopotas", "Numel", "Onix", "Shelmet", "Steelix", "Turtwig"}
@@ -457,10 +457,10 @@ def main() -> int:
         fail(errors, "Follow Me move-specific counter guidance is incomplete.")
 
     expected_new_safety_groups = {
-        "Teleport": 397,
-        "Sticky Barb": 61,
+        "Teleport": 393,
+        "Sticky Barb": 85,
         "Sketch": 45,
-        "Transform / Imposter preparation": 272,
+        "Transform / Imposter preparation": 280,
         "Trick": 122,
         "Switcheroo": 16,
         "Hoppip / Skiploom compound setup": 109,
@@ -486,8 +486,8 @@ def main() -> int:
         fail(errors, "Perish Song warnings leaked back into explicit horde methods.")
     if safari_hazard_groups:
         fail(errors, f"Safari methods must not contain battle hazards; found {len(safari_hazard_groups)} groups.")
-    if len(slowdown_groups) != 6271:
-        fail(errors, f"Expected 6,271 start-delay groups, found {len(slowdown_groups)}.")
+    if len(slowdown_groups) != 6776:
+        fail(errors, f"Expected 6,776 start-delay groups, found {len(slowdown_groups)}.")
     if any(group.get("safari") and group.get("slowdowns") for group in groups):
         fail(errors, "Safari methods must not contain encounter-start ability slowdown indicators.")
     slowed_hordes = [group for group in groups if group.get("method") in {"3x Horde", "5x Horde"} and group.get("slowdowns")]
@@ -507,8 +507,8 @@ def main() -> int:
         for group in groups
     ):
         fail(errors, "Hidden-ability Unnerve is incorrectly treated as a normal wild start delay for Houndour/Houndoom.")
-    if len(natural_horde_groups) != 9247:
-        fail(errors, f"Expected 9,247 ordinary tables containing natural hordes, found {len(natural_horde_groups)}.")
+    if len(natural_horde_groups) != 10300:
+        fail(errors, f"Expected 10,300 ordinary tables containing natural hordes, found {len(natural_horde_groups)}.")
     if not any(group.get("method") == "Singles" and group.get("containsNaturalHordes") for group in groups):
         fail(errors, "Ordinary Singles no longer include natural horde rolls.")
 
@@ -516,8 +516,8 @@ def main() -> int:
         group for group in groups
         if any(component.get("unknown") for component in group.get("components", []))
     ]
-    if len(unknown_safari_groups) != 137:
-        fail(errors, f"Expected 137 Safari groups with preserved unknown rotational mass, found {len(unknown_safari_groups)}.")
+    if len(unknown_safari_groups) != 158:
+        fail(errors, f"Expected 158 Safari groups with preserved unknown rotational mass, found {len(unknown_safari_groups)}.")
     for group in unknown_safari_groups:
         if not group.get("safari"):
             fail(errors, f"Unknown rotational mass appears outside Safari in group {group.get('id')}.")
@@ -533,16 +533,16 @@ def main() -> int:
             fail(errors, f"Safari group {group.get('id')} uses rotational setting {pool.get('settingKey')!r}, expected {expected_key!r}.")
 
     safari_groups = [group for group in groups if group.get("safari")]
-    if len(safari_groups) != 475:
-        fail(errors, f"Expected 475 Safari ranking groups after region-specific catch splitting, found {len(safari_groups)}.")
+    if len(safari_groups) != 579:
+        fail(errors, f"Expected 579 Safari ranking groups after region-specific catch splitting, found {len(safari_groups)}.")
     if any(len({location.get("region") for location in group.get("locations", [])}) > 1 for group in safari_groups):
         fail(errors, "Safari groups from different regions were merged despite region-specific capture models.")
     matched_capture_groups = [
         group for group in safari_groups
         if any(component.get("safariCapture") for component in group.get("components", []))
     ]
-    if len(matched_capture_groups) != 278:
-        fail(errors, f"Expected 278 Safari groups with at least one matched species catch estimate, found {len(matched_capture_groups)}.")
+    if len(matched_capture_groups) != 327:
+        fail(errors, f"Expected 327 Safari groups with at least one matched species catch estimate, found {len(matched_capture_groups)}.")
     if any(component.get("safariCapture") for group in groups if not group.get("safari") for component in group.get("components", [])):
         fail(errors, "Safari capture estimates leaked into non-Safari groups.")
     pidgey_estimates = [
